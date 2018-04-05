@@ -1,2 +1,4 @@
 # mlstack
-Machine learning code
+Machine learning Code
+
+A collection of tools used for machine learning problems.
