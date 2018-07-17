@@ -6,7 +6,7 @@ from functools import wraps
 class WeightDrop(torch.nn.Module):
     def __init__(self, module, weights, dropout=0, variational=False):
         """
-        Based Stephen Merity's awd-lstm-lm.
+        Based on Salesforce / Stephen Merity's awd-lstm-lm.
 
         Weight dropout using DropConnect.
 

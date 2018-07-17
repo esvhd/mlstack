@@ -107,8 +107,9 @@ class AWDRNN(nn.Module):
                  wdrop=0,
                  tie_weights=False):
         """
-        Adapted from awd-lstm-lm, with a few modifications.
-        1. No embedding dropout
+        Adapted from Salesforce awd-lstm-lm, with a few modifications.
+
+        Aimed at time series so removed embedding related code.
 
         Parameters
         ----------
