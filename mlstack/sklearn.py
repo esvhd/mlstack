@@ -7,7 +7,8 @@ import lightgbm as lgb
 
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import RandomizedSearchCV, BaseCrossValidator
 
 
 mcc_scorer = make_scorer(mcc)
@@ -18,7 +19,36 @@ brier_scorer = make_scorer(brier_score_loss,
 nll_scorer = make_scorer(log_loss, greater_is_better=False,
                          needs_proba=True)
 
+mae_scorer = make_scorer(mean_absolute_error, greater_is_better=False,
+                         needs_proba=False)
 
+mse_scorer = make_scorer(mean_squared_error, greater_is_better=False,
+                         needs_proba=False)
+
+
+def perf_time(func):
+    """Decorator for showing function call time spent.
+
+    Parameters
+    ----------
+    func : [type]
+        function to be called
+
+    Returns
+    -------
+    [type]
+        wrapper function
+    """
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        x = func(*args, **kwargs)
+        spent = time.perf_counter() - start
+        print(f'Time taken (s): {spent:.3e}')
+        return x
+    return wrapper
+
+
+@perf_time
 def param_search_lgb(params: dict, n_iter: int,
                      X_train, y_train,
                      cv=None,
@@ -212,6 +242,7 @@ def nll_metric(model, X, y):
     return log_loss(y, y_pred)
 
 
+@perf_time
 def permutation_importances(model,
                             X_train: pd.DataFrame,
                             y_train,
@@ -282,3 +313,59 @@ def compute_permute_imp(estimator, X, y, out_file: str):
         #     fp.write('permutation imp done.')
 
     return permute_imp
+
+
+@perf_time
+def random_search_train(learner, params_dict: dict,
+                        cv_method: BaseCrossValidator,
+                        X_train, y_train,
+                        X_test=None, y_test=None,
+                        n_splits=5,
+                        scoring={'mae': mae_scorer, 'mse': mse_scorer},
+                        refit='mse',
+                        n_iter: int = 10):
+    """Convenient method for running random search with sklearn models.
+
+    Parameters
+    ----------
+    learner : [type]
+        [description]
+    params_dict : dict
+        hyperparameters dict
+    cv_method : [type]
+        callable method to create cv ojbect
+    X : [type]
+        features / X
+    y : [type]
+        targets / y
+    scoring : dict, optional
+        scoring methods, by default {'mae': mae_scorer, 'mse': mse_scorer}
+    refit : optional
+        when there are more then one scoring function, we need to specify
+        how the best learner if refitted, i.e. which socring metric to use
+        to choose the best, by default 'mse'.
+    n_iter : int, optional
+        number of searches, by default 10
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
+    # use provided cv split method to create CV folds
+    cv = cv_method(n_splits=n_splits)
+    folds = cv.split(X_train)
+
+    # run random search
+    rs = RandomizedSearchCV(learner, params_dict, cv=folds, n_jobs=-1,
+                            scoring=scoring,
+                            n_iter=n_iter,
+                            refit=refit)
+    rs.fit(X_train, y_train)
+
+    print(f'Train best score: {rs.best_score_:.4e}')
+    if X_test is not None and y_test is not None:
+        test_score = rs.score(X_test, y_test)
+        print(f'Test score: {test_score:.4e}')
+
+    return rs

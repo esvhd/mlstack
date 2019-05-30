@@ -6,7 +6,9 @@ import warnings
 from sklearn import TimeSeriesSplit
 
 
-def time_series_embargo_split(X, embargo_size: int, n_splits: int,
+def time_series_embargo_split(X,
+                              embargo_size: int,
+                              n_splits: int,
                               max_train_size=None):
     """Generate time series CV with embargo, i.e. a gap exists between train
     and test data.
@@ -60,9 +62,9 @@ def long_format_ts_embargo_split(long_df: pd.DataFrame,
     time_col : str
         column representing time
     embargo_size : int
-
+        embargo length
     n_splits : int
-
+        no. of cv folds.
     sort_time_col : bool, optional
         whether to sort by time_col, default True. Turn off if data is already
         sorted.

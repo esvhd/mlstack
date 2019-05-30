@@ -10,6 +10,9 @@ import time
 # %matplotlib inline
 
 
+# TODO: fix .data usage with .detach()
+
+
 class EncoderDecoder(nn.Module):
     """
     A standard Encoder-Decoder architecture. Base for this and many
@@ -226,8 +229,7 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        # TODO: relplace Variable
-        x = x + Variable(self.pe[:, :x.size(1)], requires_grad=False)
+        x = x + torch.Tensor(self.pe[:, :x.size(1)], requires_grad=False)
         return self.dropout(x)
 
 
@@ -270,8 +272,9 @@ class Batch:
     def make_std_mask(tgt, pad):
         "Create a mask to hide padding and future words."
         tgt_mask = (tgt != pad).unsqueeze(-2)
-        tgt_mask = tgt_mask & Variable(
-            subsequent_mask(tgt.size(-1)).type_as(tgt_mask.data))
+        tgt_mask = (tgt_mask &
+                    torch.Tensor(subsequent_mask(tgt.size(-1))
+                                 .type_as(tgt_mask.data)))
         return tgt_mask
 
 
@@ -306,8 +309,8 @@ def batch_size_fn(new, count, sofar):
     if count == 1:
         max_src_in_batch = 0
         max_tgt_in_batch = 0
-    max_src_in_batch = max(max_src_in_batch,  len(new.src))
-    max_tgt_in_batch = max(max_tgt_in_batch,  len(new.trg) + 2)
+    max_src_in_batch = max(max_src_in_batch, len(new.src))
+    max_tgt_in_batch = max(max_tgt_in_batch, len(new.trg) + 2)
     src_elements = count * max_src_in_batch
     tgt_elements = count * max_tgt_in_batch
     return max(src_elements, tgt_elements)
@@ -370,4 +373,4 @@ class LabelSmoothing(nn.Module):
         if mask.dim() > 0:
             true_dist.index_fill_(0, mask.squeeze(), 0.0)
         self.true_dist = true_dist
-        return self.criterion(x, Variable(true_dist, requires_grad=False))
+        return self.criterion(x, torch.Tensor(true_dist, requires_grad=False))
