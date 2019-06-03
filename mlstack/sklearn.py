@@ -8,6 +8,7 @@ import lightgbm as lgb
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import RandomizedSearchCV, BaseCrossValidator
 
 
@@ -24,6 +25,55 @@ mae_scorer = make_scorer(mean_absolute_error, greater_is_better=False,
 
 mse_scorer = make_scorer(mean_squared_error, greater_is_better=False,
                          needs_proba=False)
+
+
+def prediction_sign(x):
+    """Used to convert prediction to class labels based on the sign
+
+    Parameters
+    ----------
+    x : [type]
+        prediction values
+
+    Returns
+    -------
+    [type]
+        Integer class labels
+    """
+    return np.sign(x).astype('int')
+
+
+def sign_binary_class_score(score_func, y_true, y_pred, **kwargs):
+    class_truth = prediction_sign(y_true)
+    class_pred = prediction_sign(y_pred)
+
+    # clean class labels
+    class_truth[class_truth == 0] = np.random.choice([1, -1])
+    class_pred[class_pred == 0] = np.random.choice([1, -1])
+
+    return score_func(class_truth, class_pred, **kwargs)
+
+
+def sign_mcc_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(mcc, y_true, y_pred, **kwargs)
+
+
+def sign_f1_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(f1_score, y_true, y_pred, **kwargs)
+
+
+def sign_roc_auc_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(roc_auc_score, y_true, y_pred, **kwargs)
+
+
+sign_mcc_scorer = make_scorer(sign_mcc_score, greater_is_better=True,
+                              needs_proba=False)
+
+sign_f1_scorer = make_scorer(sign_f1_score, greater_is_better=True,
+                             needs_proba=False)
+
+sign_roc_auc_scorer = make_scorer(sign_roc_auc_score, greater_is_better=True,
+                                  needs_proba=False)
 
 
 def perf_time(func):
@@ -317,13 +367,14 @@ def compute_permute_imp(estimator, X, y, out_file: str):
 
 @perf_time
 def random_search_train(learner, params_dict: dict,
-                        cv_method: BaseCrossValidator,
                         X_train, y_train,
+                        cv_method: BaseCrossValidator,
                         X_test=None, y_test=None,
                         n_splits=5,
                         scoring={'mae': mae_scorer, 'mse': mse_scorer},
                         refit='mse',
-                        n_iter: int = 10):
+                        n_iter: int = 10,
+                        **cv_kws):
     """Convenient method for running random search with sklearn models.
 
     Parameters
@@ -346,6 +397,8 @@ def random_search_train(learner, params_dict: dict,
         to choose the best, by default 'mse'.
     n_iter : int, optional
         number of searches, by default 10
+    cv_kws : optional
+        kwargs passed to cv_method call
 
     Returns
     -------
@@ -353,7 +406,7 @@ def random_search_train(learner, params_dict: dict,
         [description]
     """
     # use provided cv split method to create CV folds
-    cv = cv_method(n_splits=n_splits)
+    cv = cv_method(n_splits=n_splits, **cv_kws)
     folds = cv.split(X_train)
 
     # run random search
@@ -369,3 +422,21 @@ def random_search_train(learner, params_dict: dict,
         print(f'Test score: {test_score:.4e}')
 
     return rs
+
+
+def score(learner, X, y,
+          scorer_dict: dict = {'mae': mae_scorer, 'mse': mse_scorer,
+                               'mcc': sign_mcc_scorer,
+                               'f1_score': sign_f1_scorer,
+                               'roc_auc': sign_roc_auc_scorer}) -> pd.Series:
+    """Function to generate various scores / metrics.
+
+    Returns
+    -------
+    pd.Series
+        [description]
+    """
+    # y_pred = learner.predict(X)
+    scores = {name: scorer(learner, X, y)
+              for name, scorer in scorer_dict.items()}
+    return pd.Series(scores)

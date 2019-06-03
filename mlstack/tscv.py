@@ -3,7 +3,7 @@ Time series CV tools
 """
 import pandas as pd
 import warnings
-from sklearn import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit
 
 
 def time_series_embargo_split(X,
@@ -119,3 +119,36 @@ def long_format_ts_embargo_split(long_df: pd.DataFrame,
         # pdb.set_trace()
 
         yield (train_idx, test_idx)
+
+
+class TimeSeriesEmbargoSplit:
+    def __init__(self, embargo_size: int, n_splits: int = 3):
+        """Time Series Embargo CV Split class, works with sklearn.
+
+        Parameters
+        ----------
+        embargo_size : int
+            embargo size, cut off from the tail of training data.
+        n_splits : int, optional
+            number of time series splits, by default 3
+        """
+        assert(embargo_size > -1)
+
+        self.embargo_size = embargo_size
+        self.n_splits = n_splits
+
+    def split(self, X, y=None, groups=None):
+        # Start with base time series split, then take off the last few
+        # from training indices (aka embargo size)
+        tscv = TimeSeriesSplit(n_splits=self.n_splits)
+        base_cv = tscv.split(X, y, groups=groups)
+
+        if self.embargo_size < 1:
+            return base_cv
+
+        for train_idx, test_idx in base_cv:
+            assert(len(train_idx) > self.embargo_size)
+            if len(train_idx) < 2 * self.embargo_size:
+                warnings.warn(f'Training size {len(train_idx)} < 2x ' +
+                              f'Embargo size {self.embargo_size}')
+            yield train_idx[:-self.embargo_size], test_idx
