@@ -6,7 +6,7 @@ import tqdm
 import lightgbm as lgb
 
 from typing import List, Optional, Dict, Any, AnyStr, Union
-from scipy.stats import rv_continuous, kstest
+from scipy.stats import rv_continuous
 
 import sklearn.preprocessing as skp
 from sklearn.metrics import matthews_corrcoef as mcc
@@ -716,7 +716,24 @@ class LogUniformDist(rv_continuous):
         return np.log(x / self.a) / np.log(self.b / self.a)
 
 
-def log_uniform_draw(n: int, a=1e-3, b=1e3):
+def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
+    """Draw from log uniform distrubtion. This is useful for hyperparameter
+    searches where sampling uniformly between a and b isn't efficient.
+
+    Parameters
+    ----------
+    n : int
+        no. of draws
+    a : float, optional
+        lower bound, by default 1e-3
+    b : float, optional
+        upper bound, by default 1e3
+
+    Returns
+    -------
+    ndarray
+        draws
+    """
     dist = LogUniformDist(a=a, b=b, name="log_uniform")
     draws = dist.rvs(size=n)
     return draws
