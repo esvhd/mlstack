@@ -6,6 +6,7 @@ import tqdm
 import lightgbm as lgb
 
 from typing import List, Optional, Dict, Any, AnyStr, Union
+from scipy.stats import rv_continuous, kstest
 
 import sklearn.preprocessing as skp
 from sklearn.metrics import matthews_corrcoef as mcc
@@ -705,4 +706,17 @@ def pipeline_train(
     )
 
     return rs
-    # return (pipe, x_train, x_test, y_train, y_test)
+
+
+class LogUniformDist(rv_continuous):
+    def __init___(self, **kwargs):
+        super().__init__(self, **kwargs)
+
+    def _cdf(self, x):
+        return np.log(x / self.a) / np.log(self.b / self.a)
+
+
+def log_uniform_draw(n: int, a=1e-3, b=1e3):
+    dist = LogUniformDist(a=a, b=b, name="log_uniform")
+    draws = dist.rvs(size=n)
+    return draws
