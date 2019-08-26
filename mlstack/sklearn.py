@@ -5,30 +5,134 @@ import joblib
 import tqdm
 import lightgbm as lgb
 
+from typing import List, Optional, Dict, Any, AnyStr, Union
+from scipy.stats import rv_continuous
+
+import sklearn.preprocessing as skp
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.model_selection import (
+    RandomizedSearchCV,
+    BaseCrossValidator,
+    train_test_split,
+)
+from sklearn.base import BaseEstimator
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
 
 
 mcc_scorer = make_scorer(mcc)
 
-brier_scorer = make_scorer(brier_score_loss,
-                           greater_is_better=False, needs_proba=True)
+brier_scorer = make_scorer(
+    brier_score_loss, greater_is_better=False, needs_proba=True
+)
 
-nll_scorer = make_scorer(log_loss, greater_is_better=False,
-                         needs_proba=True)
+nll_scorer = make_scorer(log_loss, greater_is_better=False, needs_proba=True)
+
+mae_scorer = make_scorer(
+    mean_absolute_error, greater_is_better=False, needs_proba=False
+)
+
+mse_scorer = make_scorer(
+    mean_squared_error, greater_is_better=False, needs_proba=False
+)
 
 
-def param_search_lgb(params: dict, n_iter: int,
-                     X_train, y_train,
-                     cv=None,
-                     learner_n_jobs: int = -1,
-                     search_n_jobs: int = 1,
-                     X_test=None, y_test=None,
-                     device='cpu',
-                     cv_filename='cv_results.h5',
-                     params_filename='params.txt',
-                     **kwargs) -> dict:
+def prediction_sign(x):
+    """Used to convert prediction to class labels based on the sign
+
+    Parameters
+    ----------
+    x : [type]
+        prediction values
+
+    Returns
+    -------
+    [type]
+        Integer class labels
+    """
+    return np.sign(x).astype("int")
+
+
+def sign_binary_class_score(score_func, y_true, y_pred, **kwargs):
+    class_truth = prediction_sign(y_true)
+    class_pred = prediction_sign(y_pred)
+
+    # clean class labels
+    class_truth[class_truth == 0] = np.random.choice([1, -1])
+    class_pred[class_pred == 0] = np.random.choice([1, -1])
+
+    return score_func(class_truth, class_pred, **kwargs)
+
+
+def sign_mcc_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(mcc, y_true, y_pred, **kwargs)
+
+
+def sign_f1_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(f1_score, y_true, y_pred, **kwargs)
+
+
+def sign_roc_auc_score(y_true, y_pred, **kwargs):
+    return sign_binary_class_score(roc_auc_score, y_true, y_pred, **kwargs)
+
+
+sign_mcc_scorer = make_scorer(
+    sign_mcc_score, greater_is_better=True, needs_proba=False
+)
+
+sign_f1_scorer = make_scorer(
+    sign_f1_score, greater_is_better=True, needs_proba=False
+)
+
+sign_roc_auc_scorer = make_scorer(
+    sign_roc_auc_score, greater_is_better=True, needs_proba=False
+)
+
+
+def perf_time(func):
+    """Decorator for showing function call time spent.
+
+    Parameters
+    ----------
+    func : [type]
+        function to be called
+
+    Returns
+    -------
+    [type]
+        wrapper function
+    """
+
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        x = func(*args, **kwargs)
+        spent = time.perf_counter() - start
+        print(f"Time taken (s): {spent:.3e}")
+        return x
+
+    return wrapper
+
+
+@perf_time
+def param_search_lgb(
+    params: dict,
+    n_iter: int,
+    X_train,
+    y_train,
+    cv=None,
+    learner_n_jobs: int = -1,
+    search_n_jobs: int = 1,
+    X_test=None,
+    y_test=None,
+    device="cpu",
+    cv_filename="cv_results.h5",
+    params_filename="params.txt",
+    **kwargs,
+) -> dict:
     """Assissted param search for lightgbm classifier.
 
     Holds max_depth iterates through num_leaves, then performace random search
@@ -86,12 +190,12 @@ def param_search_lgb(params: dict, n_iter: int,
         fitted best model
     """
     # some params
-    max_depth = params.pop('max_depth')
-    num_leaves = params.pop('num_leaves')
-    assert(max_depth is not None)
-    assert(len(max_depth) == 1)
-    assert(num_leaves is not None)
-    assert(len(num_leaves) > 0)
+    max_depth = params.pop("max_depth")
+    num_leaves = params.pop("num_leaves")
+    assert max_depth is not None
+    assert len(max_depth) == 1
+    assert num_leaves is not None
+    assert len(num_leaves) > 0
 
     max_depth = max_depth[0]
     out = dict()
@@ -101,24 +205,29 @@ def param_search_lgb(params: dict, n_iter: int,
     best_learner = None
     start = time.process_time()
     for n in num_leaves:
-        print(f'max_depth = {max_depth}, num_leaves = {n}...')
-        learner = lgb.LGBMClassifier(max_depth=max_depth,
-                                     num_leaves=n,
-                                     # boosting_type='gbdt',
-                                     # objective='xentropy',
-                                     # eval_metric='binary_logloss',
-                                     # early_stopping_rounds=100,
-                                     # verbose_eval=200,
-                                     device=device,
-                                     # verbosity=lgb_verbosity,
-                                     n_jobs=learner_n_jobs)
+        print(f"max_depth = {max_depth}, num_leaves = {n}...")
+        learner = lgb.LGBMClassifier(
+            max_depth=max_depth,
+            num_leaves=n,
+            # boosting_type='gbdt',
+            # objective='xentropy',
+            # eval_metric='binary_logloss',
+            # early_stopping_rounds=100,
+            # verbose_eval=200,
+            device=device,
+            # verbosity=lgb_verbosity,
+            n_jobs=learner_n_jobs,
+        )
 
-        rs = RandomizedSearchCV(learner, params,
-                                cv=cv,
-                                n_jobs=search_n_jobs,
-                                n_iter=n_iter,
-                                return_train_score=False,
-                                **kwargs)
+        rs = RandomizedSearchCV(
+            learner,
+            params,
+            cv=cv,
+            n_jobs=search_n_jobs,
+            n_iter=n_iter,
+            return_train_score=False,
+            **kwargs,
+        )
         # model_selection._search.format_results() sometimes has an bug and
         # returns nothing, causing ValueError when unpacking output.
         rs.fit(X_train, y_train, verbose=-1)
@@ -128,71 +237,73 @@ def param_search_lgb(params: dict, n_iter: int,
             best_learner = rs.best_estimator_
 
             best_params = rs.best_params_.copy()
-            best_params['max_depth'] = max_depth
-            best_params['num_leaves'] = n
+            best_params["max_depth"] = max_depth
+            best_params["num_leaves"] = n
         elif best_score < rs.best_score_:
             best_score = rs.best_score_
             best_learner = rs.best_estimator_
 
             best_params = rs.best_params_.copy()
-            best_params['max_depth'] = max_depth
-            best_params['num_leaves'] = n
+            best_params["max_depth"] = max_depth
+            best_params["num_leaves"] = n
 
-        key = f'max_depth_{max_depth}_num_leaves_{n}'
+        key = f"max_depth_{max_depth}_num_leaves_{n}"
 
         # store this search object for later use
         out[key] = rs
 
         # save cv scores
         if cv is not None:
-            pd.DataFrame(rs.cv_results_).to_hdf(cv_filename, key=key, mode='a')
+            pd.DataFrame(rs.cv_results_).to_hdf(cv_filename, key=key, mode="a")
 
         # predict test set.
         if X_test is not None and y_test is not None:
-            assert(len(X_test) == len(y_test))
+            assert len(X_test) == len(y_test)
             y_pred = rs.predict(X_test)
             train_loss = rs.score(X_train, y_train)
             test_loss = rs.score(X_test, y_test)
             test_mcc = mcc(y_test, y_pred)
 
-            msg = (f'{key}, Dev score: {train_loss:.3f}, Test score: ' +
-                   f'{test_loss:.3f}, Test MCC: {test_mcc:.3f}\n')
+            msg = (
+                f"{key}, Dev score: {train_loss:.3f}, Test score: "
+                + f"{test_loss:.3f}, Test MCC: {test_mcc:.3f}\n"
+            )
             print(msg)
 
-            print(f'{key}, Save TSCV Best params = {best_params}')
-            with open(params_filename, 'a') as fp:
+            print(f"{key}, Save TSCV Best params = {best_params}")
+            with open(params_filename, "a") as fp:
                 fp.write(msg)
                 fp.write(str(best_params))
-                fp.write('\n')
+                fp.write("\n")
 
     time_taken = time.process_time() - start
-    print('Time taken (s): ', time_taken)
+    print("Time taken (s): ", time_taken)
 
     # write final best param
-    with open(params_filename, 'a') as fp:
+    with open(params_filename, "a") as fp:
         # convert to python types for json writes
         # best_params = {k: np.asscalar(v) for k, v in best_params.items()}
         # fp.write(json.dumps(best_params))
-        fp.write('Final result:\n')
+        fp.write("Final result:\n")
         fp.write(str(best_params))
-        fp.write('\n\n')
+        fp.write("\n\n")
 
-    out['best_params'] = best_params
-    out['best_score'] = best_score
-    out['best_learner'] = best_learner
+    out["best_params"] = best_params
+    out["best_score"] = best_score
+    out["best_learner"] = best_learner
 
     return out
 
 
 def save_lgb_model(estimator):
     # write lightgbm booster to file
-    estimator.booster_.save_model('lgb_booster.txt')
+    estimator.booster_.save_model("lgb_booster.txt")
     # gbm = lgb.Booster(model_file='lightgbm.txt')
 
     # write sklearn estimator
-    joblib.dump(estimator, 'lgb_sklearn.pkl')
+    joblib.dump(estimator, "lgb_sklearn.pkl")
     # model = joblib.load('lightgbm.pkl')
-    print('Model saved to file.')
+    print("Model saved to file.")
 
 
 def load_lgb_booster(filepath) -> lgb.Booster:
@@ -212,10 +323,10 @@ def nll_metric(model, X, y):
     return log_loss(y, y_pred)
 
 
-def permutation_importances(model,
-                            X_train: pd.DataFrame,
-                            y_train,
-                            metric=nll_metric):
+@perf_time
+def permutation_importances(
+    model, X_train: pd.DataFrame, y_train, metric=nll_metric
+) -> pd.Series:
     """Permuation importance metrics. Measures the difference of metric
     between baseline and randomly permuted rows for a given feature.
 
@@ -240,7 +351,7 @@ def permutation_importances(model,
     imp = []
 
     for col in tqdm.tqdm(X_train.columns):
-        print(f'Computing metrics for {col}...')
+        print(f"Computing metrics for {col}...")
         save = X_train[col].copy()
         X_train[col] = np.random.permutation(X_train[col])
         m = metric(model, X_train, y_train)
@@ -251,7 +362,7 @@ def permutation_importances(model,
     return imp
 
 
-def compute_permute_imp(estimator, X, y, out_file: str):
+def compute_permute_imp(estimator, X, y, out_file: str) -> pd.Series:
     """Helper function for permutation importance.
 
     Parameters
@@ -269,16 +380,360 @@ def compute_permute_imp(estimator, X, y, out_file: str):
     -------
     TYPE
     """
-    print('Computing permutation importance values...')
+    print("Computing permutation importance values...")
     X = X.copy()
     # y = y.copy()
     permute_imp = permutation_importances(estimator, X, y)
 
     # sig file
     if out_file is not None:
-        permute_imp.to_hdf(out_file, key='permute')
+        permute_imp.to_hdf(out_file, key="permute")
         # write a status file to indicate computation completed
         # with open('status.txt', 'a') as fp:
         #     fp.write('permutation imp done.')
 
     return permute_imp
+
+
+@perf_time
+def random_search_train(
+    learner,
+    params_dict: dict,
+    X_train,
+    y_train,
+    cv_method: Union[int, BaseCrossValidator],
+    X_test=None,
+    y_test=None,
+    n_splits=5,
+    scoring={"mae": mae_scorer, "mse": mse_scorer},
+    refit="mse",
+    n_iter: int = 10,
+    **cv_kws,
+) -> RandomizedSearchCV:
+    """Convenient method for running random search with sklearn models.
+
+    Parameters
+    ----------
+    learner : [type]
+        [description]
+    params_dict : dict
+        hyperparameters dict
+    cv_method : [type]
+        callable method to create cv ojbect
+    X : [type]
+        features / X
+    y : [type]
+        targets / y
+    scoring : dict, optional
+        scoring methods, by default {'mae': mae_scorer, 'mse': mse_scorer}
+    refit : optional
+        when there are more then one scoring function, we need to specify
+        how the best learner if refitted, i.e. which socring metric to use
+        to choose the best, by default 'mse'.
+    n_iter : int, optional
+        number of searches, by default 10
+    cv_kws : optional
+        kwargs passed to cv_method call
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
+    if isinstance(cv_method, int):
+        # otherwise, cv is no. of folds
+        folds = cv_method
+    else:
+        # use provided cv split method to create CV folds
+        cv = cv_method(n_splits=n_splits, **cv_kws)
+        folds = cv.split(X_train, y_train)
+
+    # run random search
+    rs = RandomizedSearchCV(
+        learner,
+        params_dict,
+        cv=folds,
+        n_jobs=-1,
+        scoring=scoring,
+        n_iter=n_iter,
+        refit=refit,
+    )
+    rs.fit(X_train, y_train)
+
+    print(f"Train best score: {rs.best_score_:.4e}")
+    if X_test is not None and y_test is not None:
+        test_score = rs.score(X_test, y_test)
+        print(f"Test score: {test_score:.4e}")
+
+    return rs
+
+
+def score(
+    learner,
+    X,
+    y,
+    scorer_dict: dict = {
+        "mae": mae_scorer,
+        "mse": mse_scorer,
+        "mcc": sign_mcc_scorer,
+        "f1_score": sign_f1_scorer,
+        "roc_auc": sign_roc_auc_scorer,
+    },
+) -> pd.Series:
+    """Function to generate various scores / metrics.
+
+    Returns
+    -------
+    pd.Series
+        [description]
+    """
+    # y_pred = learner.predict(X)
+    scores = {
+        name: scorer(learner, X, y) for name, scorer in scorer_dict.items()
+    }
+    return pd.Series(scores)
+
+
+def pipeline_train(
+    estimator: BaseEstimator,
+    data: pd.DataFrame,
+    params_dict: Dict[AnyStr, Any],
+    target_var: str,
+    is_classification: bool,
+    cat_cols: Optional[List[str]],
+    one_hot=False,
+    normalize=True,
+    impute_strategy: str = None,
+    impute_indicator: bool = False,
+    cv=None,
+    cv_splits=5,
+    test_size: Union[int, float] = 0.2,
+    split_shuffle=False,
+    search_iter: int = 10,
+    verbose=False,
+    **cv_kws,
+):
+    """Build pipeline with basic preprocessing pipeline and random search cv.
+    Steps:
+    1. Categorify data features
+    2. impute data if needed (pipeline)
+    3. normalise if needed (pipeline)
+    4. add model (pipeline)
+    5. random search
+
+    Parameters
+    ----------
+    estimator : BaseEstimator
+        prediction model
+    data : pd.DataFrame
+        data
+    params_dict : Dict[AnyStr, Any]
+        Tuning parameter dict
+    target_var : str
+        target variable name
+    is_classification : bool
+        Whether the task is classification or not.
+    cat_cols : Optional[List[str]]
+        Categorical feature names
+    one_hot : bool, optional
+        Whether to use one hot encoding for categorial features,
+        by default False, which works for tree models. Otherwise, set to True
+        for models that cannot handle ordinal features.
+    normalize : bool, optional
+        Whether to normalise in pipeline, by default True
+    impute_strategy : str, optional
+        Imputation strategy, see sklearn.impute.SimpleImputer for details,
+        by default None
+    impute_indicator : bool, optional
+        Whether to add indicator for rows imputed, by default False
+    cv : [type], optional
+        CV method class, by default None
+    cv_splits : int, optional
+        CV splits, by default 5
+    test_size : Union[int, float], optional
+        [description], by default 0.2
+    split_shuffle : bool, optional
+        [description], by default False
+    search_iter : int, optional
+        # of random search rounds, by default 10
+    verbose : bool, optional
+        [description], by default False
+
+    Returns
+    -------
+    sklearn.model_selection.RandomSearchCV
+        [description]
+    """
+    # Transform categorical variables
+    # Assume categorical variables are either ordinal or one hot
+    # ordinal used for tree methods, whereas one hot is used for others
+    # such as regression
+    if cat_cols is not None:
+        cont_mask = [
+            x not in cat_cols and x != target_var for x in data.columns
+        ]
+        cont_cols = data.columns.values[cont_mask].tolist()
+
+        if one_hot:
+            cat_encoder = skp.OneHotEncoder(sparse=False)
+            if verbose:
+                print("Use One-Hot encoding for categorical variables.")
+
+            # encode category
+            cat_data = cat_encoder.fit_transform(data[cat_cols])
+            # categories are stored as list of ndarrays
+            cat_cols = np.concatenate(cat_encoder.categories_).tolist()
+            cat_data = pd.DataFrame(
+                cat_data, index=data.index, columns=cat_cols
+            )
+
+            # concat with continuous variables
+            h, _ = data.shape
+            expected_w = len(cont_cols) + len(cat_cols) + 1
+            data = pd.concat([data[cont_cols + [target_var]], cat_data], axis=1)
+            assert data.shape == (h, expected_w)
+        else:
+            cat_encoder = skp.OrdinalEncoder()
+            h, w = data.shape
+            cat_data = cat_encoder.fit_transform(data[cat_cols])
+            cat_data = pd.DataFrame(
+                cat_data, index=data.index, columns=cat_cols
+            )
+            # join with continuous variables
+            data = pd.concat([data[cont_cols + [target_var]], cat_data], axis=1)
+            assert data.shape == (h, w + 1)
+            if verbose:
+                print("Use Ordinal encoding for categorical variables.")
+        if verbose:
+            print("Converted category columns.")
+    else:
+        # all columns are continuous
+        cont_cols = data.columns.values
+
+    # all feature columns
+    feature_cols = cat_cols + cont_cols
+
+    if verbose:
+        print(f"Categorical features # {len(cat_cols)}: {cat_cols[:5]}")
+        print(f"Continuous features # {len(cont_cols)}: {cont_cols[:5]}")
+        print(f"Total # of features: {len(feature_cols)}")
+
+    # convert columna names to indices, cannot use column names with
+    # column transformer which returns nd.arrays, in a pipeline
+    X = data[feature_cols]
+    cont_cols_loc = [X.columns.get_loc(x) for x in cont_cols]
+    # cat_cols_loc = [X.columns.get_loc(x) for x in cat_cols]
+
+    # prediction pipeline including preprocessing steps within a CV fold
+    model_steps = []
+    # build processing pipe, need separate column transformers for each step
+    # column transfomers with multiple steps would concat the output from
+    # all steps into a new feature array
+    if impute_strategy is not None:
+        imputer = SimpleImputer(
+            strategy=impute_strategy, add_indicator=impute_indicator
+        )
+        impute_trans = ColumnTransformer(
+            [("impute", imputer, cont_cols_loc)],
+            remainder="passthrough",
+            sparse_threshold=0,
+        )
+        model_steps.append(("impute", impute_trans))
+        if verbose:
+            print(f"Added imputer with strategy: {impute_strategy}.")
+
+        if impute_indicator:
+            # TODO: categorify missing indicator columns
+            print("TODO: categorify missing indicator columns")
+            pass
+
+    if normalize:
+        # somehow this step sees a sparse matrix and cannot standardise
+        # with mean...
+        cont_encoder = ColumnTransformer(
+            [("normalise", skp.StandardScaler(), cont_cols_loc)],
+            remainder="passthrough",
+        )
+        model_steps.append(("normalise", cont_encoder))
+        if verbose:
+            print("Added normalisation for continuous variables.")
+
+    model_steps.append(("model", estimator))
+    pipe = Pipeline(model_steps, verbose=verbose)
+    if verbose:
+        print(f"Pipeline = {pipe}")
+
+    # training set is used in CV / params search
+    if is_classification:
+        scoring = {"mcc": mcc_scorer, "nll": nll_scorer}
+        refit_choice = "nll"
+
+        # encode target as categories
+        target_encoder = skp.OrdinalEncoder()
+        y = target_encoder.fit_transform(
+            data[target_var].values.reshape((-1, 1))
+        )
+        if verbose:
+            print(f"Encode target var as categorical: {y.dtype}")
+    else:
+        scoring = ({"mae": mae_scorer, "mse": mse_scorer},)
+        refit_choice = "mse"
+        y = data[target_var].values.reshape((-1, 1))
+
+    # split into train and test sets
+    x_train, x_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, shuffle=split_shuffle
+    )
+    if verbose:
+        print(f"Scoring methods = {scoring.keys()}, refit: {refit_choice}")
+        print(f"Train size:, x = {x_train.shape}, y = {y_train.shape}")
+        print(f"Test size:, x = {x_test.shape}, y = {y_test.shape}")
+
+    # # build random search
+    rs = random_search_train(
+        pipe,
+        params_dict,
+        x_train,
+        y_train.ravel(),
+        cv_method=cv,
+        X_test=x_test,
+        y_test=y_test.ravel(),
+        n_splits=cv_splits,
+        scoring=scoring,
+        refit=refit_choice,
+        n_iter=search_iter,
+        **cv_kws,
+    )
+
+    return rs
+
+
+class LogUniformDist(rv_continuous):
+    def __init___(self, **kwargs):
+        super().__init__(self, **kwargs)
+
+    def _cdf(self, x):
+        return np.log(x / self.a) / np.log(self.b / self.a)
+
+
+def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
+    """Draw from log uniform distrubtion. This is useful for hyperparameter
+    searches where sampling uniformly between a and b isn't efficient.
+
+    Parameters
+    ----------
+    n : int
+        no. of draws
+    a : float, optional
+        lower bound, by default 1e-3
+    b : float, optional
+        upper bound, by default 1e3
+
+    Returns
+    -------
+    ndarray
+        draws
+    """
+    dist = LogUniformDist(a=a, b=b, name="log_uniform")
+    draws = dist.rvs(size=n)
+    return draws
