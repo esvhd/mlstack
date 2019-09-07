@@ -3,7 +3,7 @@ import warnings
 
 
 def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
-    '''
+    """
     Splits a n-dimensional time series into X/Y datasets.
 
     Given a 3-D dataset, similar to a batched training data set. Each X and Y
@@ -23,9 +23,9 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
         D: no. of features / dimensions
         L: sequence length for all dimensions
     train_len : int
-        training sequence length
+        training sequence length, i.e. input sequence length
     target_len : int
-        target sequence length
+        target sequence length, i.e. prediction length
     ban_len : int
         A buffer zone between two consecutive samples. This is introduced to
         try to break auto-correlation between neighbouring sample sets.
@@ -43,8 +43,8 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
     Where K is the number of samples per day / block, e.g. for the same day,
     there may be K samples of (D, train_len) time series.
 
-    '''
-    assert(data.ndim == 3), 'Expects data.ndims == 3, (N, dims, samples)'
+    """
+    assert data.ndim == 3, "Expects data.ndims == 3, (N, dims, samples)"
     N, D, L = data.shape
     # N: number of days
     # D: no. of features / dimensions
@@ -57,9 +57,10 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
     # make sure residual is at least train_len + target_len
     tail_size = L % step
     if tail_size != 0 and tail_size < train_len + target_len:
-        warnings.warn('Time series tail size is %d, expecting at least %d. '
-                      'Last chunk is discarded.'
-                      % (tail_size, train_len + target_len))
+        warnings.warn(
+            "Time series tail size is %d, expecting at least %d. "
+            "Last chunk is discarded." % (tail_size, train_len + target_len)
+        )
         # no need for this as samples_per_day is an integer division, therefore
         # would automatically stop before the tail chunk
         # data = data[:, :, :-tail_size]
@@ -68,11 +69,11 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
     y = np.zeros((N, samples_per_day, D, target_len))
 
     if debug:
-        print('data.shape: ', data.shape)
-        print('step size: ', step)
-        print('Expected non-overlapping samples per day: ', samples_per_day)
-        print('X.shape: ', X.shape)
-        print('y.shape: ', y.shape)
+        print("data.shape: ", data.shape)
+        print("step size: ", step)
+        print("Expected non-overlapping samples per day: ", samples_per_day)
+        print("X.shape: ", X.shape)
+        print("y.shape: ", y.shape)
 
     for i in range(samples_per_day):
         train_start = i * step
@@ -81,8 +82,10 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
         target_end = train_end + target_len
 
         if debug:
-            print('Iter: %d, train_start: %d, train_end: %d, target_end: %d'
-                  % (i, train_start, train_end, target_end))
+            print(
+                "Iter: %d, train_start: %d, train_end: %d, target_end: %d"
+                % (i, train_start, train_end, target_end)
+            )
 
         X[:, i, :] = data[:, :, train_start:train_end]
         y[:, i, :] = data[:, :, train_end:target_end]
@@ -91,8 +94,9 @@ def sequential_xy_split(data, train_len, target_len, ban_len, debug=False):
 
 
 def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
-    '''
-    Create X, Y splits for sequential data from 2D input.
+    """
+    Create X, Y splits for sequential data from 2D input. Input data is split
+    into chucks of size of (train_len + target_len + ban_len).
 
     Parameters
     ----------
@@ -106,8 +110,8 @@ def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
 
     debug : bool, optional
 
-    '''
-    assert(data.ndim == 2), 'Expects 2D data but got %d.' % data.ndim
+    """
+    assert data.ndim == 2, "Expects 2D data but got %d." % data.ndim
 
     D, L = data.shape
     # D: data dimension
@@ -120,9 +124,10 @@ def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
     # make sure residual is at least train_len + target_len
     tail_size = L % step
     if tail_size != 0 and tail_size < train_len + target_len:
-        warnings.warn('Time series tail size is %d, expecting at least %d. '
-                      'Last chunk is discarded.'
-                      % (tail_size, train_len + target_len))
+        warnings.warn(
+            "Time series tail size is %d, expecting at least %d. "
+            "Last chunk is discarded." % (tail_size, train_len + target_len)
+        )
         # no need for this as num_samples is an integer division, therefore
         # would automatically stop before the tail chunk
         # data = data[:, :-tail_size]
@@ -131,11 +136,11 @@ def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
     y = np.zeros((num_samples, D, target_len))
 
     if debug:
-        print('data.shape: ', data.shape)
-        print('step size: ', step)
-        print('Expected non-overlapping samples per day: ', num_samples)
-        print('X.shape: ', X.shape)
-        print('y.shape: ', y.shape)
+        print("data.shape: ", data.shape)
+        print("step size: ", step)
+        print("Expected non-overlapping samples per day: ", num_samples)
+        print("X.shape: ", X.shape)
+        print("y.shape: ", y.shape)
 
     for i in range(num_samples):
         train_start = i * step
@@ -144,8 +149,10 @@ def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
         target_end = train_end + target_len
 
         if debug:
-            print('Iter: %d, train_start: %d, train_end: %d, target_end: %d'
-                  % (i, train_start, train_end, target_end))
+            print(
+                "Iter: %d, train_start: %d, train_end: %d, target_end: %d"
+                % (i, train_start, train_end, target_end)
+            )
 
         X[i] = data[:, train_start:train_end]
         y[i] = data[:, train_end:target_end]

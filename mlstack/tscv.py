@@ -48,14 +48,14 @@ def wide_to_long(
 
 
 def time_series_embargo_split(
-    X, embargo_size: int, n_splits: int, max_train_size=None
+    X_wide, embargo_size: int, n_splits: int, max_train_size=None
 ):
     """Generate time series CV with embargo, i.e. a gap exists between train
     and test data.
 
     Parameters
     ----------
-    X : TYPE
+    X_wide : TYPE
         wide format time series
     embargo_size : int
         embargo length
@@ -72,7 +72,7 @@ def time_series_embargo_split(
 
     # split with time series split
     tscv = TimeSeriesSplit(n_splits, max_train_size=max_train_size)
-    base_cv = tscv.split(X)
+    base_cv = tscv.split(X_wide)
 
     if embargo_size < 1:
         return base_cv
@@ -176,7 +176,7 @@ class TimeSeriesEmbargoSplit:
         n_splits : int, optional
             number of time series splits, by default 3
         """
-        assert(embargo_size > -1)
+        assert embargo_size > -1, "Embargo size must be non-negative."
 
         self.embargo_size = embargo_size
         self.n_splits = n_splits
@@ -191,8 +191,10 @@ class TimeSeriesEmbargoSplit:
             return base_cv
 
         for train_idx, test_idx in base_cv:
-            assert(len(train_idx) > self.embargo_size)
+            assert len(train_idx) > self.embargo_size
             if len(train_idx) < 2 * self.embargo_size:
-                warnings.warn(f'Training size {len(train_idx)} < 2x ' +
-                              f'Embargo size {self.embargo_size}')
-            yield train_idx[:-self.embargo_size], test_idx
+                warnings.warn(
+                    f"Training size {len(train_idx)} < 2x "
+                    + f"Embargo size {self.embargo_size}"
+                )
+            yield train_idx[: -self.embargo_size], test_idx
