@@ -737,3 +737,33 @@ def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
     dist = LogUniformDist(a=a, b=b, name="log_uniform")
     draws = dist.rvs(size=n)
     return draws
+
+
+def train_test_split_ts(
+    data: pd.DataFrame, ban_zone: int, shuffle=False, **kwargs
+):
+    """Split dataset into train and test set, insert a ban zone if needed.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        [description]
+    ban_zone : int
+        Non-negative number, data is taken away from both the tail of train
+        and head of test data.
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
+    train, test = train_test_split(data, shuffle=shuffle, **kwargs)
+    if ban_zone != 0:
+        ban_zone = abs(ban_zone)
+        # fmt: off
+        assert ban_zone < len(train), f"ban_zone {ban_zone} must be less than length of training set {len(train)}."
+        assert ban_zone < len(test), f"ban_zone {ban_zone} must be less than length of test set {len(test)}."
+        # fmt: on
+        train = train.iloc[:-ban_zone]
+        test = test.iloc[ban_zone:]
+    return train, test
