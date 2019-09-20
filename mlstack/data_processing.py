@@ -124,10 +124,15 @@ def sequential_xy_split_2d(data, train_len, target_len, ban_len, debug=False):
     # make sure residual is at least train_len + target_len
     tail_size = L % step
     if tail_size != 0 and tail_size < train_len + target_len:
-        warnings.warn(
-            "Time series tail size is %d, expecting at least %d. "
-            "Last chunk is discarded." % (tail_size, train_len + target_len)
+        # last tail is not enough to form a training sample
+        # i.e. length is less than training lengh + target label length
+        # for time series target levels are future values
+        msg = (
+            f"Time series tail size is {tail_size}, "
+            + f"expecting at least {train_len + target_len}. "
+            + "Last chunk is discarded."
         )
+        warnings.warn(msg)
         # no need for this as num_samples is an integer division, therefore
         # would automatically stop before the tail chunk
         # data = data[:, :-tail_size]

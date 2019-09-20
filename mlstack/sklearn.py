@@ -448,6 +448,8 @@ def random_search_train(
         cv = cv_method(n_splits=n_splits, **cv_kws)
         folds = cv.split(X_train, y_train)
 
+    if isinstance(scoring, dict):
+        print(f"Scoring: {scoring.keys()}, refit: {refit}")
     # run random search
     rs = RandomizedSearchCV(
         learner,
@@ -528,7 +530,8 @@ def pipeline_train(
     data : pd.DataFrame
         data
     params_dict : Dict[AnyStr, Any]
-        Tuning parameter dict
+        Tuning parameter dict for the model, parameter keys should have
+        prefix 'model__'.
     target_var : str
         target variable name
     is_classification : bool
@@ -607,14 +610,19 @@ def pipeline_train(
         if verbose:
             print("Converted category columns.")
     else:
-        # all columns are continuous
-        cont_cols = data.columns.values
+        # all columns are continuous, skip target column
+        cont_mask = [x != target_var for x in data.columns]
+        cont_cols = data.columns.values[cont_mask].tolist()
 
     # all feature columns
-    feature_cols = cat_cols + cont_cols
+    if cat_cols is not None:
+        feature_cols = cat_cols + cont_cols
+    else:
+        feature_cols = cont_cols
 
     if verbose:
-        print(f"Categorical features # {len(cat_cols)}: {cat_cols[:5]}")
+        if cat_cols is not None:
+            print(f"Categorical features # {len(cat_cols)}: {cat_cols[:5]}")
         print(f"Continuous features # {len(cont_cols)}: {cont_cols[:5]}")
         print(f"Total # of features: {len(feature_cols)}")
 
@@ -676,7 +684,7 @@ def pipeline_train(
         if verbose:
             print(f"Encode target var as categorical: {y.dtype}")
     else:
-        scoring = ({"mae": mae_scorer, "mse": mse_scorer},)
+        scoring = {"mae": mae_scorer, "mse": mse_scorer}
         refit_choice = "mse"
         y = data[target_var].values.reshape((-1, 1))
 
