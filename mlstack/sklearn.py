@@ -528,16 +528,22 @@ def pipeline_train(
     estimator : BaseEstimator
         prediction model
     data : pd.DataFrame
-        data
+        data examples, with both features and labels.
     params_dict : Dict[AnyStr, Any]
         Tuning parameter dict for the model, parameter keys should have
         prefix 'model__'.
     target_var : str
-        target variable name
+        target variable name, i.e. column name for the labels / prediction
+        targets.
     is_classification : bool
-        Whether the task is classification or not.
+        Whether the task is classification or not. If true, MCC and NLL is
+        chosen as the scoring methods, and Negative Log-Likelihood would be
+        the method for refit after random search.
+        If set to False, MAE and MSE are the scoring method and MSE is used
+        for refit.
     cat_cols : Optional[List[str]]
-        Categorical feature names
+        Categorical feature names. Those columns not named here, except the
+        target variable, are assumed to be continuous variables.
     one_hot : bool, optional
         Whether to use one hot encoding for categorial features,
         by default False, which works for tree models. Otherwise, set to True
@@ -554,9 +560,10 @@ def pipeline_train(
     cv_splits : int, optional
         CV splits, by default 5
     test_size : Union[int, float], optional
-        [description], by default 0.2
+        ratio or number of test data size, by default 0.2, i.e. 20%
     split_shuffle : bool, optional
-        [description], by default False
+        Whether data will be shuffled when splitting into train and test data,
+        by default False
     search_iter : int, optional
         # of random search rounds, by default 10
     verbose : bool, optional
