@@ -143,39 +143,39 @@ class AWDRNN(nn.Module):
 
         assert rnn_type in ['LSTM', 'QRNN', 'GRU'], 'RNN type is not supported'
         if rnn_type == 'LSTM':
-            self.rnns = [torch.nn.LSTM(input_dim if l == 0 else hidden_dim,
-                                       hidden_dim if l != nlayers - 1
+            self.rnns = [torch.nn.LSTM(input_dim if ll == 0 else hidden_dim,
+                                       hidden_dim if ll != nlayers - 1
                                        else (input_dim if tie_weights
                                              else hidden_dim),
                                        1,
                                        dropout=0)
-                         for l in range(nlayers)]
+                         for ll in range(nlayers)]
             if wdrop:
                 self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop)
                              for rnn in self.rnns]
         if rnn_type == 'GRU':
-            self.rnns = [torch.nn.GRU(input_dim if l == 0 else hidden_dim,
-                                      hidden_dim if l != nlayers - 1
+            self.rnns = [torch.nn.GRU(input_dim if ll == 0 else hidden_dim,
+                                      hidden_dim if ll != nlayers - 1
                                       else (input_dim if tie_weights
                                             else hidden_dim),
                                       1,
                                       dropout=0)
-                         for l in range(nlayers)]
+                         for ll in range(nlayers)]
             if wdrop:
                 self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop)
                              for rnn in self.rnns]
         elif rnn_type == 'QRNN':
             from torchqrnn import QRNNLayer
-            self.rnns = [QRNNLayer(input_size=input_dim if l == 0
+            self.rnns = [QRNNLayer(input_size=input_dim if ll == 0
                                    else hidden_dim,
-                                   hidden_size=(hidden_dim if l != nlayers - 1
+                                   hidden_size=(hidden_dim if ll != nlayers - 1
                                                 else (input_dim if tie_weights
                                                       else hidden_dim)),
                                    save_prev_x=True,
                                    zoneout=0,
-                                   window=2 if l == 0 else 1,
+                                   window=2 if ll == 0 else 1,
                                    output_gate=True)
-                         for l in range(nlayers)]
+                         for ll in range(nlayers)]
             for rnn in self.rnns:
                 rnn.linear = WeightDrop(rnn.linear, ['weight'], dropout=wdrop)
         print(self.rnns)
@@ -255,12 +255,12 @@ class AWDRNN(nn.Module):
         # raw_output, hidden = self.rnn(emb, hidden)
         raw_outputs = []
         outputs = []
-        for l, rnn in enumerate(self.rnns):
+        for ll, rnn in enumerate(self.rnns):
             # current_input = raw_output
-            raw_output, new_h = rnn(raw_output, hidden[l])
+            raw_output, new_h = rnn(raw_output, hidden[ll])
             new_hidden.append(new_h)
             raw_outputs.append(raw_output)
-            if l != self.nlayers - 1:
+            if ll != self.nlayers - 1:
                 # self.hdrop(raw_output)
                 raw_output = self.lockdrop(raw_output, self.dropouth)
                 outputs.append(raw_output)
@@ -282,23 +282,23 @@ class AWDRNN(nn.Module):
         weight = next(self.parameters()).detach()
         if self.rnn_type == 'LSTM':
             return [(weight.new(1, bsz,
-                                self.hidden_dim if l != self.nlayers - 1
+                                self.hidden_dim if ll != self.nlayers - 1
                                 else (self.input_dim if self.tie_weights
                                       else self.hidden_dim))
                      .zero_(),
                      weight.new(1, bsz,
-                                self.hidden_dim if l != self.nlayers - 1
+                                self.hidden_dim if ll != self.nlayers - 1
                                 else (self.input_dim if self.tie_weights
                                       else self.hidden_dim))
                      .zero_())
-                    for l in range(self.nlayers)]
+                    for ll in range(self.nlayers)]
         elif self.rnn_type == 'QRNN' or self.rnn_type == 'GRU':
             return [weight.new(1, bsz,
-                               self.hidden_dim if l != self.nlayers - 1
+                               self.hidden_dim if ll != self.nlayers - 1
                                else (self.input_dim if self.tie_weights
                                      else self.hidden_dim))
                     .zero_()
-                    for l in range(self.nlayers)]
+                    for ll in range(self.nlayers)]
 
 
 class TimeSeriesAWDRNN(nn.Module):
@@ -530,6 +530,7 @@ def train_awd_rnn(model, config, criterion, optimizer,
             # `clip_grad_norm` helps prevent the exploding gradient problem in
             # RNNs / LSTMs.
             if config.clip:
+                # FIXME: undefined params, must be some sort of gradian
                 torch.nn.utils.clip_grad_norm_(params, config.clip)
             optimizer.step()
 

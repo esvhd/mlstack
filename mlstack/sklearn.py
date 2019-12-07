@@ -12,7 +12,9 @@ import sklearn.preprocessing as skp
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score, r2_score
+from scipy.stats import pearsonr, spearmanr
+
 from sklearn.model_selection import (
     RandomizedSearchCV,
     BaseCrossValidator,
@@ -22,6 +24,8 @@ from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+
+from .metrics import ccc
 
 
 mcc_scorer = make_scorer(mcc)
@@ -39,6 +43,50 @@ mae_scorer = make_scorer(
 mse_scorer = make_scorer(
     mean_squared_error, greater_is_better=False, needs_proba=False
 )
+
+
+def score_reg(y_truth, y_pred) -> Dict:
+    """Run all commonly used regression metrics.
+
+    Parameters
+    ----------
+    y_truth : [type]
+        [description]
+    y_pred : [type]
+        [description]
+
+    Returns
+    -------
+    Dict
+        [description]
+    """
+    r2 = r2_score(y_truth, y_pred)
+    print(f"Test set R2 score: {r2:.3f}")
+
+    corr, pval = pearsonr(y_truth, y_pred)
+    print(f"Pearson correlation {corr:.5f}, p-value = {pval:.5e}")
+
+    con_corr = ccc(y_truth, y_pred, ddof=1)
+    print(f"Concordance correlation {con_corr:.5f}")
+
+    rho, pval2 = spearmanr(y_truth, y_pred)
+    print(f"Spearman correlation {rho:.5f}, p-value = {pval:.5e}")
+
+    mae = mean_absolute_error(y_truth, y_pred)
+    print(f"MAE: {mae:.5e}")
+
+    mse = mean_squared_error(y_truth, y_pred)
+    print(f"MSE: {mse:.5e}")
+
+    out = {
+        'r2': r2,
+        'pearsonr': (corr, pval),
+        'ccc': con_corr,
+        'spearmanr': (rho, pval2),
+        'mae': mae,
+        'mse': mse,
+    }
+    return out
 
 
 def prediction_sign(x):
