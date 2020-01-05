@@ -8,6 +8,8 @@ import lightgbm as lgb
 from typing import List, Optional, Dict, Any, AnyStr, Union
 from scipy.stats import rv_continuous
 
+from sklearn.linear_model import Ridge
+
 import sklearn.preprocessing as skp
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
@@ -22,10 +24,11 @@ from sklearn.model_selection import (
 )
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.impute import SimpleImputer
 
-from .metrics import ccc
+from .metrics import ccc, spearman
+from .utils import diag_plot
 
 
 mcc_scorer = make_scorer(mcc)
@@ -44,8 +47,14 @@ mse_scorer = make_scorer(
     mean_squared_error, greater_is_better=False, needs_proba=False
 )
 
+ccc_scorer = make_scorer(ccc, greater_is_better=True, needs_proba=False)
 
-def score_reg(y_truth, y_pred) -> Dict:
+spearman_scorer = make_scorer(
+    spearman, greater_is_better=True, needs_proba=False
+)
+
+
+def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
     """Run all commonly used regression metrics.
 
     Parameters
@@ -60,11 +69,21 @@ def score_reg(y_truth, y_pred) -> Dict:
     Dict
         [description]
     """
+    if y_truth.ndim > 1:
+        y_truth = y_truth.squeeze()
+    if y_pred.ndim > 1:
+        y_pred = y_pred.squeeze()
+
+    if debug:
+        print(f"Shapes: {y_truth.shape} vs {y_pred.shape}")
+
     r2 = r2_score(y_truth, y_pred)
     print(f"Test set R2 score: {r2:.3f}")
 
     corr, pval = pearsonr(y_truth, y_pred)
+    # print(f"Pearson correlation {corr[0]:.5f}, p-value = {pval[0]:.5e}")
     print(f"Pearson correlation {corr:.5f}, p-value = {pval:.5e}")
+    # print(f"Pearson correlation {corr}, p-value = {pval}")
 
     con_corr = ccc(y_truth, y_pred, ddof=1)
     print(f"Concordance correlation {con_corr:.5f}")
@@ -79,14 +98,75 @@ def score_reg(y_truth, y_pred) -> Dict:
     print(f"MSE: {mse:.5e}")
 
     out = {
-        'r2': r2,
-        'pearsonr': (corr, pval),
-        'ccc': con_corr,
-        'spearmanr': (rho, pval2),
-        'mae': mae,
-        'mse': mse,
+        "r2": r2,
+        "pearsonr": (corr, pval),
+        "ccc": con_corr,
+        "spearmanr": (rho, pval2),
+        "mae": mae,
+        "mse": mse,
     }
+
+    if plot:
+        # produce diagnal plot, choose max of 500 samples
+        N = np.min([500, len(y_truth)])
+        idx = np.random.choice(range(0, len(y_truth)), size=N, replace=False)
+        print(f"Randomly choose {len(idx)} samples to plot...")
+        if isinstance(y_truth, np.ndarray):
+            x_sam = y_truth[idx]
+        else:
+            # assume pandas
+            x_sam = y_truth.iloc[idx]
+        if isinstance(y_pred, np.ndarray):
+            y_sam = y_pred[idx]
+        else:
+            # assume pandas
+            y_sam = y_pred.iloc[idx]
+        diag_plot(x_sam, y_sam, alpha=.2, marker='x')
+
     return out
+
+
+def get_regression_scorers() -> Dict:
+    scorers = {
+        "mae": mae_scorer,
+        "mse": mse_scorer,
+        "r2": make_scorer(r2_score, greater_is_better=True, needs_proba=False),
+        "ccc": ccc_scorer,
+        "spearman": spearman_scorer,
+    }
+    return scorers
+
+
+def reg_baseline_cv(
+    X_train,
+    y_train,
+    model=None,
+    cv=None,
+    params_dict=None,
+    X_test=None,
+    y_test=None,
+    refit="spearman",
+    plot=True,
+    **srch_kws,
+):
+    if model is None:
+        print('Using default pipeline: standard scaler + ridge')
+        model = make_pipeline(skp.StandardScaler(), Ridge())
+
+    scoring = get_regression_scorers()
+
+    srch = RandomizedSearchCV(
+        model, params_dict, cv=cv, scoring=scoring, refit=refit, **srch_kws
+    )
+
+    srch.fit(X_train, y_train)
+
+    if X_test is not None and y_test is not None:
+        # compute test scores
+        y_pred = srch.predict(X_test)
+        score_reg(y_test, y_pred, plot=plot)
+
+    return srch
 
 
 def prediction_sign(x):
@@ -782,6 +862,9 @@ class LogUniformDist(rv_continuous):
 def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
     """Draw from log uniform distrubtion. This is useful for hyperparameter
     searches where sampling uniformly between a and b isn't efficient.
+    This is more effecitive when the parameters' scale matters more, e.g.
+    1, 10, 100, 1000, ... are more effective than uniform values between
+    1 and 1000.
 
     Parameters
     ----------

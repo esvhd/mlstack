@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
 
 
 def ccc2(x, y, ddof=1):
@@ -35,8 +35,12 @@ def ccc(x, y, ddof: int = 1):
     float
         [description]
     """
-    assert x.ndim == 1
-    assert y.ndim == 1
+    if x.ndim > 1:
+        x = x.squeeze()
+    if y.ndim > 1:
+        y = y.squeeze()
+    assert x.ndim == 1, f"Expecting 1-D array but got {x.shape}."
+    assert y.ndim == 1, f"Expecting 1-D array but got {y.shape}."
 
     # returns 2x2 covariance matrix
     covar = np.cov(x, y, ddof=ddof)
@@ -47,3 +51,15 @@ def ccc(x, y, ddof: int = 1):
     rho = 2 * covar[0, 1] / (var_x + var_y + np.power(mean_x - mean_y, 2))
 
     return rho
+
+
+def spearman(y_true, y_pred):
+    if y_true.ndim > 1:
+        y_true = y_true.squeeze()
+    if y_pred.ndim > 1:
+        y_pred = y_pred.squeeze()
+    assert y_true.ndim == 1, 'spearman score expects y_true.ndim == 1'
+    assert y_pred.ndim == 1, 'spearman score expects y_pred.ndim == 1'
+
+    p, _ = spearmanr(y_true, y_pred)
+    return p

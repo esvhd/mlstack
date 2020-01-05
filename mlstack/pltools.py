@@ -30,8 +30,9 @@ def device(model: nn.Module):
 def pl_train(
     model: pl.LightningModule,
     gpus=None,
-    epochs: int = 5,
+    max_epochs: int = 5,
     log_dir="/home/zwl/tmp/tb",
+    early_stop_callback=False,
 ):
     # most basic trainer, uses good defaults
     # tensorboard --logdir /Users/zwl/tmp/tb
@@ -55,16 +56,22 @@ def pl_train(
     print(f"distributed_backend = {backend}")
 
     # exp = Experiment(save_dir=log_dir)
-    tt_logger = TestTubeLogger(
-        save_dir=log_dir, name="default", debug=False, create_git_tag=False
-    )
+    if log_dir is None:
+        tt_logger = TestTubeLogger(
+            save_dir=log_dir, name="default", debug=False, create_git_tag=False
+        )
+    else:
+        tt_logger = None
     trainer = Trainer(
-        max_nb_epochs=epochs,
+        max_epochs=max_epochs,
+        max_nb_epochs=max_epochs,
+        show_progress_bar=False,
         logger=tt_logger,
+        default_save_path=log_dir,
         # experiment=exp,
         gpus=gpus,
         distributed_backend=backend,
-        early_stop_callback=False,
+        early_stop_callback=early_stop_callback,
     )
     trainer.fit(model)
 
