@@ -155,16 +155,24 @@ def reg_baseline_cv(
 
     scoring = get_regression_scorers()
 
-    srch = RandomizedSearchCV(
-        model, params_dict, cv=cv, scoring=scoring, refit=refit, **srch_kws
-    )
-
-    srch.fit(X_train, y_train)
+    # TODO: add case for no randomized cv
+    if params_dict is not None:
+        srch = RandomizedSearchCV(
+            model, params_dict, cv=cv, scoring=scoring, refit=refit, **srch_kws
+        )
+        srch.fit(X_train, y_train)
+    else:
+        model.fit(X_train, y_train)
+        srch = model
+    y_in = srch.predict(X_train)
+    print('Training set performance:')
+    score_reg(y_train, y_in, plot=False)
 
     if X_test is not None and y_test is not None:
         # compute test scores
+        print('Test set performance:')
         y_pred = srch.predict(X_test)
-        score_reg(y_test, y_pred, plot=plot)
+        score_reg(y_test, y_pred, plot=(plot and len(y_test) < 2000))
 
     return srch
 

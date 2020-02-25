@@ -6,7 +6,7 @@ class LockedDropout(nn.Module):
 
     def __init__(self):
         """
-        Based Stephen merity's awd-lstm-lm.
+        Based on Stephen merity's awd-lstm-lm.
         """
         super().__init__()
 

@@ -7,7 +7,14 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.logging import TestTubeLogger
 
 
-def torch_device():
+def torch_device() -> str:
+    """Automatically figure out pytorch device.
+
+    Returns
+    -------
+    str
+        'cuda' or 'cpu'
+    """
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -33,7 +40,27 @@ def pl_train(
     max_epochs: int = 5,
     log_dir="/home/zwl/tmp/tb",
     early_stop_callback=False,
-):
+) -> pl.LightningModule:
+    """ pytorch lightning training helper methods.
+
+    Parameters
+    ----------
+    model : pl.LightningModule
+        [description]
+    gpus : [type], optional
+        [description], by default None
+    max_epochs : int, optional
+        [description], by default 5
+    log_dir : str, optional
+        [description], by default "/home/zwl/tmp/tb"
+    early_stop_callback : bool, optional
+        [description], by default False
+
+    Returns
+    -------
+    pl.LightningModule
+        [description]
+    """
     # most basic trainer, uses good defaults
     # tensorboard --logdir /Users/zwl/tmp/tb
 

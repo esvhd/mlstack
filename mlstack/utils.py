@@ -3,6 +3,22 @@ import matplotlib.pyplot as plt
 
 
 def diag_plot(x, y, figsize=(5, 5), **scatter_kws):
+    """Diagonal plot
+
+    Parameters
+    ----------
+    x : [type]
+        [description]
+    y : [type]
+        [description]
+    figsize : tuple, optional
+        figure size, by default (5, 5)
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
     # prepare axes limits
     x_min = min(np.min(x), np.min(y))
     x_max = max(np.max(x), np.max(y))
