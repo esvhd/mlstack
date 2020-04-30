@@ -77,6 +77,8 @@ def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
     if debug:
         print(f"Shapes: {y_truth.shape} vs {y_pred.shape}")
 
+    # TODO: figure out how to compute adjusted R2
+    # https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2
     r2 = r2_score(y_truth, y_pred)
     print(f"Test set R2 score: {r2:.3f}")
 
@@ -121,7 +123,7 @@ def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
         else:
             # assume pandas
             y_sam = y_pred.iloc[idx]
-        diag_plot(x_sam, y_sam, alpha=.2, marker='x')
+        diag_plot(x_sam, y_sam, alpha=0.2, marker="x")
 
     return out
 
@@ -150,7 +152,7 @@ def reg_baseline_cv(
     **srch_kws,
 ):
     if model is None:
-        print('Using default pipeline: standard scaler + ridge')
+        print("Using default pipeline: standard scaler + ridge")
         model = make_pipeline(skp.StandardScaler(), Ridge())
 
     scoring = get_regression_scorers()
@@ -165,12 +167,12 @@ def reg_baseline_cv(
         model.fit(X_train, y_train)
         srch = model
     y_in = srch.predict(X_train)
-    print('Training set performance:')
+    print("Training set performance:")
     score_reg(y_train, y_in, plot=False)
 
     if X_test is not None and y_test is not None:
         # compute test scores
-        print('Test set performance:')
+        print("Test set performance:")
         y_pred = srch.predict(X_test)
         score_reg(y_test, y_pred, plot=(plot and len(y_test) < 2000))
 
