@@ -54,7 +54,9 @@ spearman_scorer = make_scorer(
 )
 
 
-def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
+def score_reg(
+    y_truth, y_pred, debug=True, plot=False, nobs: int = None, p: int = None
+) -> Dict:
     """Run all commonly used regression metrics.
 
     Parameters
@@ -63,12 +65,22 @@ def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
         [description]
     y_pred : [type]
         [description]
+    debug : bool, optional
+        [description], by default True
+    plot : bool, optional
+        [description], by default False
+    nobs : int, optional
+        sample size, by default None. If both nobs and p are given the adjusted
+        R2 can be computed.
+    p : int, optional
+        no. of features, by default None.
 
     Returns
     -------
     Dict
         [description]
     """
+
     if y_truth.ndim > 1:
         y_truth = y_truth.squeeze()
     if y_pred.ndim > 1:
@@ -77,10 +89,13 @@ def score_reg(y_truth, y_pred, debug=True, plot=False) -> Dict:
     if debug:
         print(f"Shapes: {y_truth.shape} vs {y_pred.shape}")
 
-    # TODO: figure out how to compute adjusted R2
-    # https://en.wikipedia.org/wiki/Coefficient_of_determination#Adjusted_R2
     r2 = r2_score(y_truth, y_pred)
-    print(f"Test set R2 score: {r2:.3f}")
+    if nobs is not None and p is not None and nobs > 0 and p > 1:
+        # compute adjusted R-squared
+        r2 = 1 - (1 - r2) * (nobs - 1) / (nobs - p - 1)
+        print(f"Adjusted R^2 score: {r2:.3f}")
+    else:
+        print(f"R^2 score: {r2:.3f}")
 
     corr, pval = pearsonr(y_truth, y_pred)
     # print(f"Pearson correlation {corr[0]:.5f}, p-value = {pval[0]:.5e}")
