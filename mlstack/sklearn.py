@@ -5,17 +5,16 @@ import joblib
 import tqdm
 import lightgbm as lgb
 
-from typing import List, Optional, Dict, Any, AnyStr, Union
+from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple
 from scipy.stats import rv_continuous
-
-from sklearn.linear_model import Ridge
+from scipy.stats import pearsonr, spearmanr
 
 import sklearn.preprocessing as skp
+from sklearn.linear_model import Ridge
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.metrics import f1_score, roc_auc_score, r2_score
-from scipy.stats import pearsonr, spearmanr
 
 from sklearn.model_selection import (
     RandomizedSearchCV,
@@ -26,6 +25,7 @@ from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.impute import SimpleImputer
+from sklearn.inspection import permutation_importance
 
 from .metrics import ccc, spearman
 from .utils import diag_plot
@@ -55,7 +55,13 @@ spearman_scorer = make_scorer(
 
 
 def score_reg(
-    y_truth, y_pred, debug=True, plot=False, nobs: int = None, p: int = None
+    y_truth,
+    y_pred,
+    debug=False,
+    plot=False,
+    nobs: int = None,
+    p: int = None,
+    verbose: bool = True,
 ) -> Dict:
     """Run all commonly used regression metrics.
 
@@ -93,32 +99,37 @@ def score_reg(
     if nobs is not None and p is not None and nobs > 0 and p > 1:
         # compute adjusted R-squared
         r2 = 1 - (1 - r2) * (nobs - 1) / (nobs - p - 1)
-        print(f"Adjusted R^2 score: {r2:.3f}")
-    else:
+        if verbose:
+            print(f"Adjusted R^2 score: {r2:.3f}")
+    elif verbose:
         print(f"R^2 score: {r2:.3f}")
 
     corr, pval = pearsonr(y_truth, y_pred)
-    # print(f"Pearson correlation {corr[0]:.5f}, p-value = {pval[0]:.5e}")
-    print(f"Pearson correlation {corr:.5f}, p-value = {pval:.5e}")
-    # print(f"Pearson correlation {corr}, p-value = {pval}")
 
     con_corr = ccc(y_truth, y_pred, ddof=1)
-    print(f"Concordance correlation {con_corr:.5f}")
 
     rho, pval2 = spearmanr(y_truth, y_pred)
-    print(f"Spearman correlation {rho:.5f}, p-value = {pval:.5e}")
 
     mae = mean_absolute_error(y_truth, y_pred)
-    print(f"MAE: {mae:.5e}")
 
     mse = mean_squared_error(y_truth, y_pred)
-    print(f"MSE: {mse:.5e}")
+
+    if verbose:
+        # print(f"Pearson correlation {corr[0]:.5f}, p-value = {pval[0]:.5e}")
+        print(f"Pearson correlation {corr:.5f}, p-value = {pval:.5e}")
+        # print(f"Pearson correlation {corr}, p-value = {pval}")
+        print(f"Spearman correlation {rho:.5f}, p-value = {pval:.5e}")
+        print(f"Concordance correlation {con_corr:.5f}")
+        print(f"MAE: {mae:.5e}")
+        print(f"MSE: {mse:.5e}")
 
     out = {
         "r2": r2,
-        "pearsonr": (corr, pval),
+        "pearsonr": corr,
+        "pearsonr_pval": pval,
         "ccc": con_corr,
-        "spearmanr": (rho, pval2),
+        "spearmanr": rho,
+        "spearmanr_pval": pval2,
         "mae": mae,
         "mse": mse,
     }
@@ -138,7 +149,9 @@ def score_reg(
         else:
             # assume pandas
             y_sam = y_pred.iloc[idx]
-        diag_plot(x_sam, y_sam, alpha=0.2, marker="x")
+        ax = diag_plot(x_sam, y_sam, alpha=0.2, marker="x")
+        ax.set_ylabel("y_pred")
+        ax.set_xlabel("y_truth")
 
     return out
 
@@ -152,6 +165,97 @@ def get_regression_scorers() -> Dict:
         "spearman": spearman_scorer,
     }
     return scorers
+
+
+def reg_baseline(
+    model,
+    X,
+    y,
+    X_test=None,
+    y_test=None,
+    normalize: bool = True,
+    plot: bool = True,
+    permute_imp: bool = False,
+    verbose: bool = True,
+) -> Tuple:
+    """Baseline evaluation scores.
+
+    Parameters
+    ----------
+    model : [type]
+        [description]
+    X : [type]
+        [description]
+    y : [type]
+        [description]
+    X_test : [type], optional
+        [description], by default None
+    y_test : [type], optional
+        [description], by default None
+    normalize : bool, optional
+        [description], by default True
+    plot : bool, optional
+        [description], by default True
+
+    Returns
+    -------
+    Tuple
+        Tuple of two: (model, scores_dict)
+        If permute_imp set to True, returns (model, scores_dict, imp_scores)
+    """
+    if normalize:
+        scaler = skp.StandardScaler()
+        X = scaler.fit_transform(X)
+        if X_test is not None:
+            X_test = scaler.transform(X_test)
+
+    model.fit(X, y)
+    if X_test is not None and y_test is not None:
+        # use test set for eval
+        if verbose:
+            print("Test set eval:")
+        y_pred = model.predict(X_test)
+    else:
+        if verbose:
+            print("Training set eval:")
+        y_pred = model.predict(X)
+        # use training set as test set
+        X_test = X
+        y_test = y
+
+    scores = score_reg(y_test, y_pred, plot=plot, verbose=verbose)
+    if permute_imp:
+        imps, _ = permute_imp_sk(model, X_test, y_test)
+        return model, scores, imps
+    else:
+        return model, scores
+
+
+def reg_baseline_ridge(
+    alpha,
+    X,
+    y,
+    X_test=None,
+    y_test=None,
+    fit_intercept: bool = True,
+    normalize: bool = True,
+    plot: bool = True,
+    permute_imp: bool = False,
+    verbose: bool = True,
+) -> Tuple:
+    model = Ridge(alpha=alpha, fit_intercept=fit_intercept, normalize=normalize)
+    out = reg_baseline(
+        model,
+        X,
+        y,
+        X_test,
+        y_test,
+        normalize,
+        plot,
+        permute_imp=permute_imp,
+        verbose=verbose,
+    )
+    return out
 
 
 def reg_baseline_cv(
@@ -169,6 +273,7 @@ def reg_baseline_cv(
     if model is None:
         print("Using default pipeline: standard scaler + ridge")
         model = make_pipeline(skp.StandardScaler(), Ridge())
+        params_dict = {"ridge__alpha": [1e-3, 1e-2, 1e-1, 1.0, 10.0]}
 
     scoring = get_regression_scorers()
 
@@ -938,3 +1043,56 @@ def train_test_split_ts(
         train = train.iloc[:-ban_zone]
         test = test.iloc[ban_zone:]
     return train, test
+
+
+def permute_imp_sk(
+    estimator,
+    X,
+    y,
+    scoring="neg_mean_absolute_error",
+    n_repeats=10,
+    n_jobs=-1,
+    rand_seed=None,
+) -> Tuple[pd.DataFrame, Dict]:
+    """Compute permutation importance with sklearn's API.
+
+    Parameters
+    ----------
+    estimator : [type]
+        [description]
+    X : [type]
+        [description]
+    y : [type]
+        [description]
+    scoring : str, optional
+        [description], by default "neg_mean_absolute_error"
+    n_repeats : int, optional
+        [description], by default 10
+    n_jobs : int, optional
+        [description], by default -1
+    rand_seed : [type], optional
+        [description], by default None
+
+    Returns
+    -------
+    Tuple[pd.DataFrame, np.ndarray]
+        [description]
+    """
+    imp_dict = permutation_importance(
+        estimator,
+        X,
+        y,
+        scoring=scoring,
+        n_repeats=n_repeats,
+        n_jobs=n_jobs,
+        random_state=rand_seed,
+    )
+
+    mean = imp_dict.get("importances_mean")
+    std = imp_dict.get("importances_std")
+
+    df = pd.DataFrame.from_dict({"score_mean": mean, "score_std": std})
+    df.sort_values("score_mean", inplace=True)
+    if isinstance(X, pd.DataFrame):
+        df.index = X.columns
+    return df, imp_dict
