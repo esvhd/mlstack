@@ -4,13 +4,14 @@ import pandas as pd
 import joblib
 import tqdm
 import lightgbm as lgb
+import matplotlib.pyplot as plt
 
 from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple
 from scipy.stats import rv_continuous
 from scipy.stats import pearsonr, spearmanr
 
 import sklearn.preprocessing as skp
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, RANSACRegressor, TheilSenRegressor
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -139,6 +140,7 @@ def score_reg(
         N = np.min([500, len(y_truth)])
         idx = np.random.choice(range(0, len(y_truth)), size=N, replace=False)
         print(f"Randomly choose {len(idx)} samples to plot...")
+
         if isinstance(y_truth, np.ndarray):
             x_sam = y_truth[idx]
         else:
@@ -149,9 +151,23 @@ def score_reg(
         else:
             # assume pandas
             y_sam = y_pred.iloc[idx]
-        ax = diag_plot(x_sam, y_sam, alpha=0.2, marker="x")
+
+        _, axes = plt.subplots(ncols=2, figsize=(10.5, 5))
+        ax = axes[0]
+        ax = diag_plot(x_sam, y_sam, ax=ax, alpha=0.2, marker="x")
         ax.set_ylabel("y_pred")
         ax.set_xlabel("y_truth")
+        ax.set_title("Predicted vs Truth")
+
+        # also plot residual vs true labels, to see if there is systematic
+        # bias in the forecast, e.g. larger residual for larger targets
+        resid = x_sam - y_sam
+        ax = axes[1]
+        ax = diag_plot(x_sam, resid, ax=ax, alpha=0.2, marker="x")
+        ax.set_ylabel("residual")
+        ax.set_xlabel("y_truth")
+        ax.set_title("Residual vs Truth")
+        plt.tight_layout()
 
     return out
 
@@ -244,6 +260,59 @@ def reg_baseline_ridge(
     verbose: bool = True,
 ) -> Tuple:
     model = Ridge(alpha=alpha, fit_intercept=fit_intercept, normalize=normalize)
+    out = reg_baseline(
+        model,
+        X,
+        y,
+        X_test,
+        y_test,
+        normalize,
+        plot,
+        permute_imp=permute_imp,
+        verbose=verbose,
+    )
+    return out
+
+
+def reg_baseline_ransac(
+    X,
+    y,
+    X_test=None,
+    y_test=None,
+    base_estimator=None,
+    normalize: bool = True,
+    plot: bool = True,
+    permute_imp: bool = False,
+    verbose: bool = True,
+    **ransac_kws,
+) -> Tuple:
+    model = RANSACRegressor(base_estimator=base_estimator, **ransac_kws)
+    out = reg_baseline(
+        model,
+        X,
+        y,
+        X_test,
+        y_test,
+        normalize,
+        plot,
+        permute_imp=permute_imp,
+        verbose=verbose,
+    )
+    return out
+
+
+def reg_baseline_theilsen(
+    X,
+    y,
+    X_test=None,
+    y_test=None,
+    normalize: bool = True,
+    plot: bool = True,
+    permute_imp: bool = False,
+    verbose: bool = True,
+    **theilsen_kws,
+) -> Tuple:
+    model = TheilSenRegressor(**theilsen_kws)
     out = reg_baseline(
         model,
         X,

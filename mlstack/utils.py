@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def diag_plot(y_true, y_pred, figsize=(5, 5), **scatter_kws):
+def diag_plot(y_true, y_pred, figsize=(5, 5), ax=None, **scatter_kws):
     """Diagonal plot
 
     Parameters
@@ -29,7 +29,9 @@ def diag_plot(y_true, y_pred, figsize=(5, 5), **scatter_kws):
     # create 45-dgree diagonal line
     diag = np.linspace(x_min, x_max, 100)
 
-    _, ax = plt.subplots(figsize=figsize)
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+
     ax.scatter(x=y_true, y=y_pred, **scatter_kws)
     ax.plot(diag, diag, ls="--", c="g", lw=1.0, alpha=0.5)
     ax.set_ylim((x_min, x_max))
