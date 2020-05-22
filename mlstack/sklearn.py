@@ -6,7 +6,7 @@ import tqdm
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 
-from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple
+from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple, Callable
 from scipy.stats import rv_continuous
 from scipy.stats import pearsonr, spearmanr
 
@@ -23,7 +23,7 @@ from sklearn.model_selection import (
     train_test_split,
 )
 from sklearn.base import BaseEstimator
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, make_column_transformer
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
@@ -163,7 +163,8 @@ def score_reg(
         # bias in the forecast, e.g. larger residual for larger targets
         resid = x_sam - y_sam
         ax = axes[1]
-        ax = diag_plot(x_sam, resid, ax=ax, alpha=0.2, marker="x")
+        # ax = diag_plot(x_sam, resid, ax=ax, alpha=0.2, marker="x")
+        ax.scatter(x_sam, resid, alpha=0.2, marker="x")
         ax.set_ylabel("residual")
         ax.set_xlabel("y_truth")
         ax.set_title("Residual vs Truth")
@@ -366,6 +367,105 @@ def reg_baseline_cv(
         score_reg(y_test, y_pred, plot=(plot and len(y_test) < 2000))
 
     return srch
+
+
+def make_transformer(func: Callable, **kwargs):
+    """Make an sklearn transformer, to use with transform() function.
+
+    Parameters
+    ----------
+    func : Callable
+        function to perform the transform
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
+
+    transformer = skp.FunctionTransformer(func, kw_args=kwargs)
+    return transformer
+
+
+def transform(
+    x: pd.DataFrame,
+    *transformers,
+    remainder="passthrough",
+    keep_orig: bool = False,
+) -> Tuple[pd.DataFrame, ColumnTransformer]:
+    col_trans = make_column_transformer(*transformers, remainder=remainder)
+    x2 = col_trans.fit_transform(x)
+
+    if keep_orig:
+        out = x.join(x2, how="left")
+    else:
+        # out = x2
+        out = pd.DataFrame(x2, index=x.index)
+        # only replce columns when they are of the same length.
+        # this may not be the case if one of the transformer is OneHot.
+        if len(out.columns) == len(x.columns):
+            out.columns = x.columns
+
+    return out, col_trans
+
+
+def get_onehot_cat_columns(
+    ct: ColumnTransformer, enc_name="onehotencoder", drop_first=True
+) -> List[str]:
+    oh_cols = []
+    if drop_first:
+        offset = 1
+    else:
+        offset = 0
+    for c in ct.named_transformers_.get(enc_name).categories_:
+        oh_cols.append(c[offset:])
+    return np.concatenate(oh_cols).tolist()
+
+
+def quick_transform(
+    x: pd.DataFrame,
+    std_cols: List[str] = None,
+    cat_cols: List[str] = None,
+    cat_drop: str = "first",
+    remainder="passthrough",
+    debug: bool = False,
+) -> Tuple[pd.DataFrame, ColumnTransformer]:
+    transformers = []
+    out_cols = []
+    if std_cols is not None:
+        transformers.append((skp.StandardScaler(), std_cols))
+        # prepare for later column rename
+        out_cols += std_cols
+    if cat_cols is not None:
+        enc = skp.OneHotEncoder(drop=cat_drop, sparse=False)
+        transformers.append((enc, cat_cols))
+
+    out, coder = transform(
+        x, *transformers, remainder=remainder, keep_orig=False
+    )
+
+    # columns orders should be std_cols, cat_cols, and any others
+    if cat_cols is not None:
+        oh_cols = get_onehot_cat_columns(coder)
+        out_cols += oh_cols
+
+    # other columns which are not either std_cols or one-hot columns
+    # i.e. those passed through
+    other_mask = [
+        (x not in std_cols if std_cols is not None else True)
+        and (x not in cat_cols if cat_cols is not None else True)
+        for x in x.columns
+    ]
+    if debug:
+        print()
+    if np.any(other_mask):
+        last_cols = x.columns[other_mask].tolist()
+        out_cols += last_cols
+    if debug:
+        print(f"Feature columns: {out_cols}\n")
+    out.columns = out_cols
+
+    return out, coder
 
 
 def prediction_sign(x):
