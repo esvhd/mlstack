@@ -64,7 +64,8 @@ def score_reg(
     p: int = None,
     verbose: bool = True,
 ) -> Dict:
-    """Run all commonly used regression metrics.
+    """Run all commonly used regression metrics. Note that since this uses
+    sklearn's r2_score(), R^2 score here always assumes model has an intercept.
 
     Parameters
     ----------
@@ -96,6 +97,9 @@ def score_reg(
     if debug:
         print(f"Shapes: {y_truth.shape} vs {y_pred.shape}")
 
+    # sklearn r2_score ALWAYS assume that there is an intercept, despite
+    # explicitly telling the models not to do so. See SO answer below
+    # https://stackoverflow.com/questions/54614157/scikit-learn-statsmodels-which-r-squared-is-correct
     r2 = r2_score(y_truth, y_pred)
     if nobs is not None and p is not None and nobs > 0 and p > 1:
         # compute adjusted R-squared
