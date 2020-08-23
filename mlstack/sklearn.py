@@ -156,7 +156,7 @@ def score_reg(
             # assume pandas
             y_sam = y_pred.iloc[idx]
 
-        _, axes = plt.subplots(ncols=2, figsize=(10.5, 5))
+        _, axes = plt.subplots(ncols=2, figsize=(8.5, 4))
         ax = axes[0]
         ax = diag_plot(x_sam, y_sam, ax=ax, alpha=0.2, marker="x")
         ax.set_ylabel("y_pred")
@@ -245,7 +245,7 @@ def reg_baseline(
         y_test = y
 
     scores = score_reg(y_test, y_pred, plot=plot, verbose=verbose)
-    if permute_imp:
+    if permute_imp and X_test is not None and y_test is not None:
         imps, _ = permute_imp_sk(model, X_test, y_test)
         return model, scores, imps
     else:
