@@ -32,7 +32,7 @@ from .metrics import ccc, spearman
 from .utils import diag_plot
 
 
-mcc_scorer = make_scorer(mcc)
+mcc_scorer = make_scorer(mcc, greater_is_better=False, needs_proba=False)
 
 brier_scorer = make_scorer(
     brier_score_loss, greater_is_better=False, needs_proba=True
@@ -224,6 +224,8 @@ def reg_baseline(
         Tuple of two: (model, scores_dict)
         If permute_imp set to True, returns (model, scores_dict, imp_scores)
     """
+    assert model is not None, "A model must be provided."
+
     if normalize:
         scaler = skp.StandardScaler()
         X = scaler.fit_transform(X)
@@ -333,8 +335,8 @@ def reg_baseline_theilsen(
 
 
 def reg_baseline_cv(
-    X_train,
-    y_train,
+    X,
+    y,
     model=None,
     cv=None,
     params_dict=None,
@@ -356,13 +358,13 @@ def reg_baseline_cv(
         srch = RandomizedSearchCV(
             model, params_dict, cv=cv, scoring=scoring, refit=refit, **srch_kws
         )
-        srch.fit(X_train, y_train)
+        srch.fit(X, y)
     else:
-        model.fit(X_train, y_train)
+        model.fit(X, y)
         srch = model
-    y_in = srch.predict(X_train)
+    y_in = srch.predict(X)
     print("Training set performance:")
-    score_reg(y_train, y_in, plot=False)
+    score_reg(y, y_in, plot=False)
 
     if X_test is not None and y_test is not None:
         # compute test scores
@@ -371,6 +373,41 @@ def reg_baseline_cv(
         score_reg(y_test, y_pred, plot=(plot and len(y_test) < 2000))
 
     return srch
+
+
+def reg_df_decorator(func):
+    def inner(
+        x: Union[str, List[str]],
+        y: str,
+        data: pd.DataFrame,
+        test_data: pd.DataFrame = None,
+        dropna: bool = False,
+        **kwargs,
+    ):
+        if dropna:
+            if isinstance(x, str):
+                cols = [x, y]
+            else:
+                cols = x + [y]
+            data = data[cols].dropna()
+
+            if test_data is not None:
+                test_data = test_data[cols].dropna()
+
+        X = data[x]
+        X_test = test_data[x] if test_data is not None else None
+        y_test = test_data[y] if test_data is not None else None
+
+        return func(X=X, y=data[y], X_test=X_test, y_test=y_test, **kwargs)
+
+    return inner
+
+
+reg_baseline2 = reg_df_decorator(reg_baseline)
+reg_baseline_ridge2 = reg_df_decorator(reg_baseline_ridge)
+reg_baseline_ransac2 = reg_df_decorator(reg_baseline_ransac)
+reg_baseline_theilsen2 = reg_df_decorator(reg_baseline_theilsen)
+reg_baseline_cv2 = reg_df_decorator(reg_baseline_cv)
 
 
 def make_transformer(func: Callable, **kwargs):
@@ -431,6 +468,7 @@ def quick_transform(
     std_cols: List[str] = None,
     cat_cols: List[str] = None,
     cat_drop: str = "first",
+    use_onehot: bool = True,
     remainder="passthrough",
     debug: bool = False,
 ) -> Tuple[pd.DataFrame, ColumnTransformer]:
@@ -441,8 +479,19 @@ def quick_transform(
         # prepare for later column rename
         out_cols += std_cols
     if cat_cols is not None:
-        enc = skp.OneHotEncoder(drop=cat_drop, sparse=False)
-        transformers.append((enc, cat_cols))
+        if use_onehot:
+            if debug:
+                print("Use One Hot encoder for categorical variables.")
+            enc = skp.OneHotEncoder(drop=cat_drop, sparse=False)
+            transformers.append((enc, cat_cols))
+        else:
+            # model categorical vars for trees
+            if debug:
+                print("Use Int32 for categorical variables.")
+            enc = skp.OrdinalEncoder(dtype=np.int32)
+            transformers.append((enc, cat_cols))
+            # add columns for output
+            out_cols += cat_cols
 
     out, coder = transform(
         x, *transformers, remainder=remainder, keep_orig=False
@@ -450,8 +499,13 @@ def quick_transform(
 
     # columns orders should be std_cols, cat_cols, and any others
     if cat_cols is not None:
-        oh_cols = get_onehot_cat_columns(coder)
-        out_cols += oh_cols
+        if use_onehot:
+            oh_cols = get_onehot_cat_columns(coder)
+            out_cols += oh_cols
+        else:
+            # make sure categorical vars are Int32
+            for x in cat_cols:
+                out[x] = out[x].astype(np.int32)
 
     # other columns which are not either std_cols or one-hot columns
     # i.e. those passed through
@@ -460,8 +514,6 @@ def quick_transform(
         and (x not in cat_cols if cat_cols is not None else True)
         for x in x.columns
     ]
-    if debug:
-        print()
     if np.any(other_mask):
         last_cols = x.columns[other_mask].tolist()
         out_cols += last_cols
@@ -788,7 +840,72 @@ def permutation_importances(
         m = metric(model, X_train, y_train)
         X_train[col] = save
         imp.append(baseline - m)
-    imp = pd.Series(np.array(imp), index=X_train.columns)
+    imp = pd.Series(np.array(imp), index=X_train.columns).sort_values()
+
+    return imp
+
+
+def _permute_columns_eval(model, X, y, cols, metric):
+    """Helper function for parallel processing permute / eval.
+
+    Parameters
+    ----------
+    model : [type]
+        [description]
+    X : [type]
+        [description]
+    y : [type]
+        [description]
+    cols : [type]
+        [description]
+    metric : [type]
+        [description]
+
+    Returns
+    -------
+    [type]
+        [description]
+    """
+    X_copy = X.copy()
+    # cols are column names in this cluster. Permute all columns
+    for c in cols:
+        X_copy[c] = np.random.permutation(X_copy[c])
+
+    m = metric(model, X_copy, y)
+
+    return m
+
+
+def clustered_permututation_importance(
+    model, X: pd.DataFrame, y, cluster_dict: Dict, metric=nll_metric, n_jobs=1,
+) -> pd.Series:
+    # TODO: add method to generate clusters for correlation matrices.
+    baseline = metric(model, X, y)
+
+    if n_jobs < 2:
+        imp = dict()
+
+        for key, cols in cluster_dict.items():
+            # key is cluster label
+            print(f"Compute importance for cluster: {key}...")
+            X_copy = X.copy()
+            # cols are column names in this cluster. Permute all columns
+            for c in cols:
+                X_copy[c] = np.random.permutation(X_copy[c])
+
+            m = metric(model, X_copy, y)
+            imp[key] = baseline - m
+
+        imp = pd.Series(imp)
+    else:
+        # parallel mode
+        print("Computing in parallel...")
+        # this code works for python 3.7+
+        imp = joblib.Parallel(n_jobs=n_jobs)(
+            joblib.delayed(_permute_columns_eval)(model, X, y, cols, metric)
+            for _, cols in cluster_dict.items()
+        )
+        imp = pd.Series(imp, index=cluster_dict.keys())
 
     return imp
 
