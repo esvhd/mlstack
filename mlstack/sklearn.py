@@ -19,6 +19,7 @@ from sklearn.metrics import f1_score, roc_auc_score, r2_score
 
 from sklearn.model_selection import (
     RandomizedSearchCV,
+    GridSearchCV,
     BaseCrossValidator,
     train_test_split,
 )
@@ -30,6 +31,7 @@ from sklearn.inspection import permutation_importance
 
 from .metrics import ccc, spearman
 from .utils import diag_plot
+from .tscv import TimeSeriesEmbargoSplit
 
 
 mcc_scorer = make_scorer(mcc, greater_is_better=False, needs_proba=False)
@@ -101,7 +103,9 @@ def score_reg(
     # explicitly telling the models not to do so. See SO answer below
     # https://stackoverflow.com/questions/54614157/scikit-learn-statsmodels-which-r-squared-is-correct
     r2 = r2_score(y_truth, y_pred)
-    if nobs is not None and p is not None and nobs > 0 and p > 1:
+    if nobs is None:
+        nobs = len(y_truth)
+    if p is not None and nobs > 0 and p > 1:
         # compute adjusted R-squared
         r2 = 1 - (1 - r2) * (nobs - 1) / (nobs - p - 1)
         if verbose:
@@ -1330,7 +1334,8 @@ def train_test_split_ts(
         assert ban_zone < len(train), f"ban_zone {ban_zone} must be less than length of training set {len(train)}."
         assert ban_zone < len(test), f"ban_zone {ban_zone} must be less than length of test set {len(test)}."
         # fmt: on
-        train = train.iloc[:-ban_zone]
+        end_idx = len(train) - ban_zone
+        train = train.iloc[:end_idx]
         test = test.iloc[ban_zone:]
     return train, test
 
@@ -1386,3 +1391,61 @@ def permute_imp_sk(
     if isinstance(X, pd.DataFrame):
         df.index = X.columns
     return df, imp_dict
+
+
+def ts_predict(
+    x_cols,
+    y_col,
+    data: pd.DataFrame,
+    model=None,
+    params: dict = None,
+    test_size=0.2,
+    ban_zone: int = 0,
+    n_splits: int = 5,
+    train_embargo_size=0,
+    scoring="mse",
+    plot=True,
+):
+    if test_size is not None and test_size > 0:
+        train_idx, test_idx = train_test_split_ts(
+            data, ban_zone=ban_zone, test_size=test_size
+        )
+        train = data.iloc[train_idx]
+        test = data.iloc[test_idx]
+    else:
+        train = data
+        test = None
+
+    spliter = TimeSeriesEmbargoSplit(
+        embargo_size=train_embargo_size, n_splits=n_splits
+    )
+    cv = spliter.split(train)
+
+    if model is None:
+        model = make_pipeline([skp.StandardScaler(), Ridge()])
+        params = {"ridge__alpha": [1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0]}
+
+    gs = GridSearchCV(
+        model,
+        params,
+        scoring=scoring,
+        n_jobs=-1,
+        refit=True,
+        cv=cv,
+        return_train_score=True,
+    )
+
+    X_train, y_train = train[x_cols], train[y_col]
+    gs.fit(X_train, y_train)
+
+    if test is not None:
+        X_test, y_test = test[x_cols], test[y_col]
+        y_pred = gs.predict(X_test)
+        print("Return Test set scores.")
+    else:
+        y_pred = gs.predict(X_train)
+        print("Return Training set scores.")
+
+    scores = score_reg(y_test, y_pred, p=X_train.ndim, plot=plot)
+
+    return gs, scores

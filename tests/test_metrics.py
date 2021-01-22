@@ -1,6 +1,7 @@
 import numpy as np
 import mlstack.metrics as M
 
+
 def test_ccc():
     x = np.random.rand(20)
     y = np.random.rand(20)

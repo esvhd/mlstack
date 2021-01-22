@@ -85,7 +85,9 @@ def time_series_embargo_split(
                 f"Training size {len(train_idx)} < 2x "
                 + f"Embargo size {embargo_size}"
             )
-        yield train_idx[:-embargo_size], test_idx
+        if embargo_size > 0:
+            train_idx = train_idx[:-embargo_size]
+        yield train_idx, test_idx
 
 
 def long_format_ts_embargo_split(
@@ -197,4 +199,6 @@ class TimeSeriesEmbargoSplit:
                     f"Training size {len(train_idx)} < 2x "
                     + f"Embargo size {self.embargo_size}"
                 )
-            yield train_idx[: -self.embargo_size], test_idx
+            if self.embargo_size > 0:
+                train_idx = train_idx[: -self.embargo_size]
+            yield train_idx, test_idx
