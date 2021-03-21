@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple, Callable
 from scipy.stats import rv_continuous
 from scipy.stats import pearsonr, spearmanr
+from scipy.cluster import hierarchy
 
 import sklearn.preprocessing as skp
 from sklearn.linear_model import Ridge, RANSACRegressor, TheilSenRegressor
@@ -808,6 +809,18 @@ def nll_metric(model, X, y):
     # match predicted proba
     y_pred = model.predict_proba(X)
     return log_loss(y, y_pred)
+
+
+def feature_corr_clusters(data: Union[pd.DataFrame, np.ndarray], plot=False):
+    if isinstance(data, np.ndarray):
+        data = pd.DataFrame(data)
+
+    corr = data.corr(method="spearman")
+    linkage = hierarchy.ward(corr)
+
+    if plot:
+        hierarchy.dendrogram(linkage, labels=data.columns, leaf_rotation=90)
+    return corr, linkage
 
 
 @perf_time
