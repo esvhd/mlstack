@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple, Callable
 from scipy.stats import rv_continuous
 from scipy.stats import pearsonr, spearmanr
-from scipy.cluster import hierarchy
+import scipy.cluster.hierarchy as H
+import scipy.spatial.distance as D
 
 import sklearn.preprocessing as skp
 from sklearn.linear_model import Ridge, RANSACRegressor, TheilSenRegressor
@@ -811,15 +812,79 @@ def nll_metric(model, X, y):
     return log_loss(y, y_pred)
 
 
+def dendrogram(
+    X: pd.DataFrame,
+    metric="euclidean",
+    figsize=(6, 6),
+    plot=True,
+    verbose: bool = True,
+) -> Tuple[str, np.ndarray]:
+    """Select the best method for hierarchical linkage based on the highest
+    cophenetic correlation coefficient.
+
+    Parameters
+    ----------
+    X : pd.DataFrame
+        data matrix
+    metric : str, optional
+        distance metric, by default "euclidean"
+    figsize : tuple, optional
+        plot figure size, by default (6, 6)
+    plot : bool, optional
+        whether to plot the dendrogram, by default True
+    verbose : bool, optional
+        print stats, by default True
+
+    Returns
+    -------
+    Tuple[str, np.ndarray]
+        (best_method, link)
+    """
+    dist = D.pdist(X, metric=metric)
+
+    cache = dict()
+    best = None
+    best_link = None
+    best_ccc = None
+
+    methods = ["average", "single", "complete", "ward", "centroid", "median"]
+    for m in methods:
+        link = H.linkage(dist, method=m, metric=metric)
+        dcop = H.cophenet(link)
+        # compute cophenetic correlation coefficient
+        cc = spearmanr(dist, dcop)
+        cache[m] = cc.correlation
+
+        # keep the best cophenetic corr method
+        if best_ccc is None:
+            best_ccc = cc.correlation
+            best_link = link
+            best = m
+        elif cc.correlation > best_ccc:
+            best_ccc = cc.correlation
+            best_link = link
+            best = m
+
+    if verbose:
+        print(cache)
+
+    if plot:
+        _, ax = plt.subplots(figsize=figsize)
+        H.dendrogram(best_link, labels=X.columns, orientation="right", ax=ax)
+        ax.set_title(
+            f"Best method = {best}, Cophenetic Corr Coef = {best_ccc:.1%}"
+        )
+
+    return best, best_link
+
+
 def feature_corr_clusters(data: Union[pd.DataFrame, np.ndarray], plot=False):
     if isinstance(data, np.ndarray):
         data = pd.DataFrame(data)
 
     corr = data.corr(method="spearman")
-    linkage = hierarchy.ward(corr)
+    _, linkage = dendrogram(corr, plot=plot)
 
-    if plot:
-        hierarchy.dendrogram(linkage, labels=data.columns, leaf_rotation=90)
     return corr, linkage
 
 
