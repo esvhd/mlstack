@@ -58,8 +58,26 @@ def spearman(y_true, y_pred):
         y_true = y_true.squeeze()
     if y_pred.ndim > 1:
         y_pred = y_pred.squeeze()
-    assert y_true.ndim == 1, 'spearman score expects y_true.ndim == 1'
-    assert y_pred.ndim == 1, 'spearman score expects y_pred.ndim == 1'
+    assert y_true.ndim == 1, "spearman score expects y_true.ndim == 1"
+    assert y_pred.ndim == 1, "spearman score expects y_pred.ndim == 1"
 
     p, _ = spearmanr(y_true, y_pred)
     return p
+
+
+def rmspe(y_true, y_pred) -> float:
+    """Root Mean Square Percentage Error
+
+    Parameters
+    ----------
+    y_true : [type]
+        True labels
+    y_pred : [type]
+        Predicted lables
+
+    Returns
+    -------
+    float
+        [description]
+    """
+    return np.sqrt(np.mean(np.square((y_true - y_pred) / y_true)))

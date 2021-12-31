@@ -14,7 +14,7 @@ def save_model(model: nn.Module, filepath: str):
 def load_model(model: nn.Module, filepath: str) -> nn.Module:
     # Load state dict into a model for inference
     state_dict = torch.load(filepath)
-    model.load_state_dict(state_dict.get('model_state_dict'))
+    model.load_state_dict(state_dict.get("model_state_dict"))
     model.eval()
     return model
 
@@ -51,6 +51,15 @@ class FCNet(nn.Module):
 
 class Dataset2D(Dataset):
     def __init__(self, x, y):
+        """Make dataset from 2D tabular data.
+
+        Parameters
+        ----------
+        x : [type]
+            [description]
+        y : [type]
+            [description]
+        """
         super().__init__()
         assert x.shape[0] == y.shape[0] or x.shape[0] == len(y)
         self.x = torch.from_numpy(x).float()
@@ -131,8 +140,8 @@ class PLNet(pl.LightningModule):
 
         # below worked for tensorflow 2.0..
         # val_loss = {"avg_val_loss": avg_loss.item()}
-        tensorbord_log = {'val_loss': avg_loss.item()}
-        return {"log": tensorbord_log, 'avg_val_loss': avg_loss.item()}
+        tensorbord_log = {"val_loss": avg_loss.item()}
+        return {"log": tensorbord_log, "avg_val_loss": avg_loss.item()}
 
     def configure_optimizers(self):
         # REQUIRED

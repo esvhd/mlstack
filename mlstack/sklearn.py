@@ -2,6 +2,7 @@ import time
 import numpy as np
 import pandas as pd
 import joblib
+import warnings
 import tqdm
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -12,8 +13,10 @@ from scipy.stats import pearsonr, spearmanr
 import scipy.cluster.hierarchy as H
 import scipy.spatial.distance as D
 
+import sklearn
 import sklearn.preprocessing as skp
 from sklearn.linear_model import Ridge, RANSACRegressor, TheilSenRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import matthews_corrcoef as mcc
 from sklearn.metrics import brier_score_loss, log_loss, make_scorer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -340,6 +343,36 @@ def reg_baseline_theilsen(
     return out
 
 
+def reg_baseline_rf(
+    X,
+    y,
+    X_test=None,
+    y_test=None,
+    n_estimators: int = 1000,
+    n_jobs=-1,
+    # normalize: bool = True,
+    plot: bool = True,
+    permute_imp: bool = False,
+    verbose: bool = True,
+    **rf_kws,
+) -> Tuple:
+    model = RandomForestRegressor(
+        n_estimators=n_estimators, n_jobs=n_jobs, **rf_kws
+    )
+    out = reg_baseline(
+        model,
+        X,
+        y,
+        X_test,
+        y_test,
+        False,
+        plot,
+        permute_imp=permute_imp,
+        verbose=verbose,
+    )
+    return out
+
+
 def reg_baseline_cv(
     X,
     y,
@@ -416,17 +449,19 @@ reg_baseline_theilsen2 = reg_df_decorator(reg_baseline_theilsen)
 reg_baseline_cv2 = reg_df_decorator(reg_baseline_cv)
 
 
-def make_transformer(func: Callable, **kwargs):
+def make_transformer(func: Callable, **kwargs) -> skp.FunctionTransformer:
     """Make an sklearn transformer, to use with transform() function.
 
     Parameters
     ----------
     func : Callable
-        function to perform the transform
+        custom function to perform the transformation.
+    kwargs : dict
+        parameters passed to the function.
 
     Returns
     -------
-    [type]
+    FunctionTransformer
         [description]
     """
 
@@ -439,6 +474,7 @@ def transform(
     *transformers,
     remainder="passthrough",
     keep_orig: bool = False,
+    guess_columns: bool = True,
 ) -> Tuple[pd.DataFrame, ColumnTransformer]:
     col_trans = make_column_transformer(*transformers, remainder=remainder)
     x2 = col_trans.fit_transform(x)
@@ -450,7 +486,10 @@ def transform(
         out = pd.DataFrame(x2, index=x.index)
         # only replce columns when they are of the same length.
         # this may not be the case if one of the transformer is OneHot.
-        if len(out.columns) == len(x.columns):
+        if guess_columns and len(out.columns) == len(x.columns):
+            # ASSUMPTION: column order is preserved - but this is not true
+            # in sklearn 1.0
+            # passed through columns appear at the end of the frame
             out.columns = x.columns
 
     return out, col_trans
@@ -488,6 +527,7 @@ def quick_transform(
         if use_onehot:
             if debug:
                 print("Use One Hot encoder for categorical variables.")
+            # by default drop first category - one hot category N - 1
             enc = skp.OneHotEncoder(drop=cat_drop, sparse=False)
             transformers.append((enc, cat_cols))
         else:
@@ -886,6 +926,51 @@ def feature_corr_clusters(data: Union[pd.DataFrame, np.ndarray], plot=False):
     _, linkage = dendrogram(corr, plot=plot)
 
     return corr, linkage
+
+
+def parse_linkage(
+    x: np.ndarray, Z: np.ndarray, N: int, verbose=False
+) -> np.ndarray:
+    """Given a starting point in linkage matrix, find all the leaves in this
+    branch.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Starting point. This should be an entry / row in Z.
+    Z : np.ndarray
+        linkage matrix returned by scipy.cluster.linkage()
+    N : int
+        No. of original samples
+    verbose : bool, optional
+        print debug info or not, by default False
+
+    Returns
+    -------
+    np.ndarray
+        array of leaves
+    """
+    if verbose:
+        print(f"starting cluster: {x}")
+    idx = x[:2]
+    leaves = idx[idx < N].astype(int)
+    branch = idx[idx > N - 1].astype(int)
+
+    if verbose:
+        print(f"leaves: {leaves}")
+
+    if len(branch) > 0:
+        # turn into index for Z
+        next_idx = branch - N
+        if verbose:
+            print(f"next idx: {next_idx}")
+        for nn in next_idx:
+            subset = Z[nn]
+            sub_leaves = parse_linkage(subset, Z, verbose=verbose)
+        if verbose:
+            print(f"sub-leaves returned: {sub_leaves}")
+        leaves = np.concatenate([leaves, sub_leaves])
+    return leaves
 
 
 @perf_time
@@ -1527,3 +1612,78 @@ def ts_predict(
     scores = score_reg(y_test, y_pred, p=X_train.ndim, plot=plot)
 
     return gs, scores
+
+
+def get_feature_names(column_transformer):
+    """Get feature names from all transformers.
+
+    Credit: https://johaupt.github.io/scikit-learn/tutorial/python/data%20processing/ml%20pipeline/model%20interpretation/columnTransformer_feature_names.html
+
+    Returns
+    -------
+    feature_names : list of strings
+        Names of the features produced by transform.
+    """
+    # Remove the internal helper function
+    # check_is_fitted(column_transformer)
+
+    # Turn loopkup into function for better handling with pipeline later
+    def get_names(trans):
+        # >> Original get_feature_names() method
+        if trans == "drop" or (hasattr(column, "__len__") and not len(column)):
+            return []
+        if trans == "passthrough":
+            if hasattr(column_transformer, "_df_columns"):
+                if (not isinstance(column, slice)) and all(
+                    isinstance(col, str) for col in column
+                ):
+                    return column
+                else:
+                    return column_transformer._df_columns[column]
+            else:
+                indices = np.arange(column_transformer._n_features)
+                return ["x%d" % i for i in indices[column]]
+        if not hasattr(trans, "get_feature_names"):
+            # >>> Change: Return input column names if no method avaiable
+            # Turn error into a warning
+            warnings.warn(
+                "Transformer %s (type %s) does not "
+                "provide get_feature_names. "
+                "Will return input column names if available"
+                % (str(name), type(trans).__name__)
+            )
+            # For transformers without a get_features_names method, use the
+            # input names to the column transformer
+            if column is None:
+                return []
+            else:
+                return [name + "__" + f for f in column]
+
+        return [name + "__" + f for f in trans.get_feature_names()]
+
+    # Start of processing
+    feature_names = []
+
+    # Allow transformers to be pipelines. Pipeline steps are named differently,
+    # so preprocessing is needed
+    if type(column_transformer) == sklearn.pipeline.Pipeline:
+        l_transformers = [
+            (name, trans, None, None)
+            for step, name, trans in column_transformer._iter()
+        ]
+    else:
+        # For column transformers, follow the original method
+        l_transformers = list(column_transformer._iter(fitted=True))
+
+    for name, trans, column, _ in l_transformers:
+        if type(trans) == sklearn.pipeline.Pipeline:
+            # Recursive call on pipeline
+            _names = get_feature_names(trans)
+            # if pipeline has no transformer that returns names
+            if len(_names) == 0:
+                _names = [name + "__" + f for f in column]
+            feature_names.extend(_names)
+        else:
+            feature_names.extend(get_names(trans))
+
+    return feature_names
