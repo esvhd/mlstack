@@ -7,7 +7,17 @@ import tqdm
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 
-from typing import List, Optional, Dict, Any, AnyStr, Union, Tuple, Callable
+from typing import (
+    Iterable,
+    List,
+    Optional,
+    Dict,
+    Any,
+    AnyStr,
+    Union,
+    Tuple,
+    Callable,
+)
 from scipy.stats import rv_continuous
 from scipy.stats import pearsonr, spearmanr
 import scipy.cluster.hierarchy as H
@@ -975,7 +985,11 @@ def parse_linkage(
 
 @perf_time
 def permutation_importances(
-    model, X_train: pd.DataFrame, y_train, metric=nll_metric
+    model,
+    X_train: pd.DataFrame,
+    y_train,
+    metric=nll_metric,
+    verbose: bool = False,
 ) -> pd.Series:
     """Permuation importance metrics. Measures the difference of metric
     between baseline and randomly permuted rows for a given feature.
@@ -1001,13 +1015,16 @@ def permutation_importances(
     imp = []
 
     for col in tqdm.tqdm(X_train.columns):
-        print(f"Computing metrics for {col}...")
+        if verbose:
+            print(f"Computing metrics for {col}...")
         save = X_train[col].copy()
         X_train[col] = np.random.permutation(X_train[col])
-        m = metric(model, X_train, y_train)
+        score = metric(model, X_train, y_train)
         X_train[col] = save
-        imp.append(baseline - m)
-    imp = pd.Series(np.array(imp), index=X_train.columns).sort_values()
+        imp.append(baseline - score)
+    imp = pd.Series(np.array(imp), index=X_train.columns).sort_values(
+        ascending=False
+    )
 
     return imp
 
@@ -1038,13 +1055,13 @@ def _permute_columns_eval(model, X, y, cols, metric):
     for c in cols:
         X_copy[c] = np.random.permutation(X_copy[c])
 
-    m = metric(model, X_copy, y)
+    score = metric(model, X_copy, y)
 
-    return m
+    return score
 
 
 def clustered_permututation_importance(
-    model, X: pd.DataFrame, y, cluster_dict: Dict, metric=nll_metric, n_jobs=1,
+    model, X: pd.DataFrame, y, cluster_dict: Dict, metric=nll_metric, n_jobs=1
 ) -> pd.Series:
     # TODO: add method to generate clusters for correlation matrices.
     baseline = metric(model, X, y)
@@ -1077,7 +1094,65 @@ def clustered_permututation_importance(
     return imp
 
 
-def compute_permute_imp(estimator, X, y, out_file: str) -> pd.Series:
+@perf_time
+def permutation_imp_group(
+    model,
+    X_train: pd.DataFrame,
+    y_train,
+    groups: Iterable[Iterable[str]],
+    group_names: Iterable[str],
+    metric=nll_metric,
+    verbose: bool = False,
+) -> pd.Series:
+    """Permuation importance metrics, but each type we permute a group of
+    columns. This is useful for one-hot features.
+
+    Parameters
+    ----------
+    model : TYPE
+        sklearn estimator
+    X_train : pd.DataFrame
+
+    y_train : TYPE
+
+    metric : TYPE, optional
+        evaluation metric. default is NLL for classification.
+
+    Returns
+    -------
+    TYPE
+    """
+    print("Permute groups of columns...")
+    baseline = metric(model, X_train, y_train)
+    imp = []
+
+    for cols in tqdm.tqdm(groups):
+        if verbose:
+            print(f"Computing metrics for {cols}...")
+
+        mask = [x in X_train.columns for x in cols]
+        keep = np.array(cols)[mask]
+        score = _permute_columns_eval(
+            model, X_train, y_train, cols=keep, metric=metric
+        )
+        imp.append(baseline - score)
+
+    imp = pd.Series(np.array(imp), index=group_names).sort_values(
+        ascending=False
+    )
+
+    return imp
+
+
+def compute_permute_imp(
+    estimator,
+    X,
+    y,
+    metric: Callable,
+    groups: Iterable[Iterable[str]] = None,
+    group_names: Iterable[str] = None,
+    out_file: str = None,
+) -> pd.Series:
     """Helper function for permutation importance.
 
     Parameters
@@ -1098,9 +1173,20 @@ def compute_permute_imp(estimator, X, y, out_file: str) -> pd.Series:
     print("Computing permutation importance values...")
     X = X.copy()
     # y = y.copy()
-    permute_imp = permutation_importances(estimator, X, y)
 
-    # sig file
+    if groups is None:
+        permute_imp = permutation_importances(estimator, X, y, metric=metric)
+    else:
+        permute_imp = permutation_imp_group(
+            estimator,
+            X,
+            y,
+            metric=metric,
+            groups=groups,
+            group_names=group_names,
+        )
+
+    # log file
     if out_file is not None:
         permute_imp.to_hdf(out_file, key="permute")
         # write a status file to indicate computation completed
