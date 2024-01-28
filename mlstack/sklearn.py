@@ -1170,6 +1170,9 @@ def compute_permute_imp(
     -------
     TYPE
     """
+    if groups is not None:
+        assert group_names is not None and len(groups) == len(group_names)
+
     print("Computing permutation importance values...")
     X = X.copy()
     # y = y.copy()
@@ -1752,7 +1755,7 @@ def get_feature_names(column_transformer):
 
     # Allow transformers to be pipelines. Pipeline steps are named differently,
     # so preprocessing is needed
-    if type(column_transformer) == sklearn.pipeline.Pipeline:
+    if isinstance(column_transformer, sklearn.pipeline.Pipeline):
         l_transformers = [
             (name, trans, None, None)
             for step, name, trans in column_transformer._iter()
@@ -1762,7 +1765,7 @@ def get_feature_names(column_transformer):
         l_transformers = list(column_transformer._iter(fitted=True))
 
     for name, trans, column, _ in l_transformers:
-        if type(trans) == sklearn.pipeline.Pipeline:
+        if isinstance(trans, sklearn.pipeline.Pipeline):
             # Recursive call on pipeline
             _names = get_feature_names(trans)
             # if pipeline has no transformer that returns names
