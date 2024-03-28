@@ -538,7 +538,7 @@ def quick_transform(
             if debug:
                 print("Use One Hot encoder for categorical variables.")
             # by default drop first category - one hot category N - 1
-            enc = skp.OneHotEncoder(drop=cat_drop, sparse=False)
+            enc = skp.OneHotEncoder(drop=cat_drop, sparse_output=False)
             transformers.append((enc, cat_cols))
         else:
             # model categorical vars for trees
@@ -1389,7 +1389,7 @@ def pipeline_train(
         cont_cols = data.columns.values[cont_mask].tolist()
 
         if one_hot:
-            cat_encoder = skp.OneHotEncoder(sparse=False)
+            cat_encoder = skp.OneHotEncoder(sparse_output=False)
             if verbose:
                 print("Use One-Hot encoding for categorical variables.")
 
