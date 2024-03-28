@@ -49,26 +49,26 @@ from .utils import diag_plot
 from .tscv import TimeSeriesEmbargoSplit
 
 
-mcc_scorer = make_scorer(mcc, greater_is_better=False, needs_proba=False)
+mcc_scorer = make_scorer(mcc, greater_is_better=False, response_method='predict')
 
 brier_scorer = make_scorer(
-    brier_score_loss, greater_is_better=False, needs_proba=True
+    brier_score_loss, greater_is_better=False, response_method="predict_proba"
 )
 
-nll_scorer = make_scorer(log_loss, greater_is_better=False, needs_proba=True)
+nll_scorer = make_scorer(log_loss, greater_is_better=False, response_method="predict_proba")
 
 mae_scorer = make_scorer(
-    mean_absolute_error, greater_is_better=False, needs_proba=False
+    mean_absolute_error, greater_is_better=False, response_method='predict'
 )
 
 mse_scorer = make_scorer(
-    mean_squared_error, greater_is_better=False, needs_proba=False
+    mean_squared_error, greater_is_better=False, response_method='predict'
 )
 
-ccc_scorer = make_scorer(ccc, greater_is_better=True, needs_proba=False)
+ccc_scorer = make_scorer(ccc, greater_is_better=True, response_method='predict')
 
 spearman_scorer = make_scorer(
-    spearman, greater_is_better=True, needs_proba=False
+    spearman, greater_is_better=True, response_method='predict'
 )
 
 
@@ -200,7 +200,7 @@ def get_regression_scorers() -> Dict:
     scorers = {
         "mae": mae_scorer,
         "mse": mse_scorer,
-        "r2": make_scorer(r2_score, greater_is_better=True, needs_proba=False),
+        "r2": make_scorer(r2_score, greater_is_better=True, reponse_method='predict'),
         "ccc": ccc_scorer,
         "spearman": spearman_scorer,
     }
@@ -620,15 +620,15 @@ def sign_roc_auc_score(y_true, y_pred, **kwargs):
 
 
 sign_mcc_scorer = make_scorer(
-    sign_mcc_score, greater_is_better=True, needs_proba=False
+    sign_mcc_score, greater_is_better=True, reponse_method='predict'
 )
 
 sign_f1_scorer = make_scorer(
-    sign_f1_score, greater_is_better=True, needs_proba=False
+    sign_f1_score, greater_is_better=True, reponse_method='predict'
 )
 
 sign_roc_auc_scorer = make_scorer(
-    sign_roc_auc_score, greater_is_better=True, needs_proba=False
+    sign_roc_auc_score, greater_is_better=True, reponse_method='predict'
 )
 
 
