@@ -77,6 +77,7 @@ def score_reg(
     y_pred,
     debug=False,
     plot=False,
+    plot_size: int = 300,
     nobs: int = None,
     p: int = None,
     verbose: bool = True,
@@ -159,8 +160,9 @@ def score_reg(
     }
 
     if plot:
-        # produce diagnal plot, choose max of 500 samples
-        N = np.min([500, len(y_truth)])
+        # produce diagnal plot, choose max of N samples
+        N = plot_size if len(y_truth) > plot_size else len(y_truth)
+        # N = np.min([500, len(y_truth)])
         idx = np.random.choice(range(0, len(y_truth)), size=N, replace=False)
         print(f"Randomly choose {len(idx)} samples to plot...")
 
@@ -251,6 +253,7 @@ def reg_baseline(
         if X_test is not None:
             X_test = scaler.transform(X_test)
 
+    print(f"X = {X.shape}, y = {y.shape}")
     model.fit(X, y)
     if X_test is not None and y_test is not None:
         # use test set for eval
@@ -285,7 +288,7 @@ def reg_baseline_ridge(
     permute_imp: bool = False,
     verbose: bool = True,
 ) -> Tuple:
-    model = Ridge(alpha=alpha, fit_intercept=fit_intercept, normalize=normalize)
+    model = Ridge(alpha=alpha, fit_intercept=fit_intercept)
     out = reg_baseline(
         model,
         X,
