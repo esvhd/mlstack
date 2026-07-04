@@ -124,6 +124,9 @@ def long_format_ts_embargo_split(
     # convert from long to wide format, use X to hold dates
     assert time_col in long_df.columns, f"{time_col} does NOT exist in frame."
 
+    # avoid mutating the caller's dataframe
+    long_df = long_df.copy()
+
     # make sure data is sorted in time order
     if sort_time_col:
         long_df.sort_values(time_col, ascending=True, inplace=True)

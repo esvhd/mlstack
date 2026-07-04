@@ -1,3 +1,9 @@
-sckit-learn>=1.4
+scikit-learn>=1.4
 lightgbm
-pygrp
+torch
+pytorch-lightning
+scipy
+pandas
+matplotlib
+joblib
+tqdm

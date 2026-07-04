@@ -80,4 +80,8 @@ def rmspe(y_true, y_pred) -> float:
     float
         [description]
     """
-    return np.sqrt(np.mean(np.square((y_true - y_pred) / y_true)))
+    # add a small epsilon to the divisor to avoid division by zero when
+    # y_true contains exact zeros (e.g. flat return days). Note this can
+    # still produce very large values for near-zero truths, but avoids
+    # inf/nan propagation.
+    return np.sqrt(np.mean(np.square((y_true - y_pred) / (y_true + 1e-10))))

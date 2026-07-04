@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
-
-# from test_tube import Experiment
-from pytorch_lightning.logging import TestTubeLogger
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import EarlyStopping
 
 
 def torch_device() -> str:
@@ -47,58 +46,59 @@ def pl_train(
     ----------
     model : pl.LightningModule
         [description]
-    gpus : [type], optional
-        [description], by default None
+    gpus : int or list, optional
+        number of gpus (int) or specific gpu ids (list), by default None
     max_epochs : int, optional
         [description], by default 5
     log_dir : str, optional
-        [description], by default "/home/zwl/tmp/tb"
+        directory for tensorboard logs, by default "/home/zwl/tmp/tb"
     early_stop_callback : bool, optional
-        [description], by default False
+        if True, add an EarlyStopping callback monitoring val_loss,
+        by default False
 
     Returns
     -------
     pl.LightningModule
         [description]
     """
-    # most basic trainer, uses good defaults
-    # tensorboard --logdir /Users/zwl/tmp/tb
-
-    # put model on the right device
-    # device = torch_device()
-    # print(f"Move model to device: {device}, gpus = {gpus}")
-    # model = model.to(torch_device())
-
-    # see pl docs for details here. latest version as of 2019.09 needs to use
-    # backend for multi-gpu training
-    if (isinstance(gpus, list) and len(gpus) > 1) or (
-        isinstance(gpus, int) and gpus > 1
-    ):
-        backend = "ddp"
+    # map the legacy `gpus` argument onto the modern accelerator/devices API.
+    backend = None
+    if gpus is None:
+        accelerator, devices = "cpu", None
     else:
-        backend = None
+        accelerator = "gpu"
+        if isinstance(gpus, list):
+            devices = len(gpus)
+        elif isinstance(gpus, int):
+            devices = gpus
+        else:
+            devices = 1
+        # multi-gpu training uses ddp
+        if isinstance(devices, int) and devices > 1:
+            backend = "ddp"
 
-    print(f"GPUs = {gpus}, backend = {backend}")
-    print(f"Tensorbord cmd: tensorboard --logdir {log_dir}")
-    print(f"distributed_backend = {backend}")
+    print(f"GPUs = {gpus}, accelerator = {accelerator}, devices = {devices}")
+    print(f"Tensorboard cmd: tensorboard --logdir {log_dir}")
+    print(f"strategy = {backend}")
 
-    # exp = Experiment(save_dir=log_dir)
-    if log_dir is None:
-        tt_logger = TestTubeLogger(
-            save_dir=log_dir, name="default", debug=False, create_git_tag=False
-        )
+    # only create a logger when a log directory is provided
+    if log_dir is not None:
+        logger = TensorBoardLogger(save_dir=log_dir, name="default")
     else:
-        tt_logger = None
+        logger = False
+
+    callbacks = []
+    if early_stop_callback:
+        callbacks.append(EarlyStopping(monitor="val_loss"))
+
     trainer = Trainer(
         max_epochs=max_epochs,
-        max_nb_epochs=max_epochs,
-        show_progress_bar=False,
-        logger=tt_logger,
-        default_save_path=log_dir,
-        # experiment=exp,
-        gpus=gpus,
-        distributed_backend=backend,
-        early_stop_callback=early_stop_callback,
+        accelerator=accelerator,
+        devices=devices,
+        strategy=backend,
+        logger=logger,
+        default_root_dir=log_dir,
+        callbacks=callbacks,
     )
     trainer.fit(model)
 

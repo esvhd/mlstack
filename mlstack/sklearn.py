@@ -143,7 +143,7 @@ def score_reg(
         # print(f"Pearson correlation {corr[0]:.5f}, p-value = {pval[0]:.5e}")
         print(f"Pearson correlation {corr:.5f}, p-value = {pval:.5e}")
         # print(f"Pearson correlation {corr}, p-value = {pval}")
-        print(f"Spearman correlation {rho:.5f}, p-value = {pval:.5e}")
+        print(f"Spearman correlation {rho:.5f}, p-value = {pval2:.5e}")
         print(f"Concordance correlation {con_corr:.5f}")
         print(f"MAE: {mae:.5e}")
         print(f"MSE: {mse:.5e}")
@@ -202,7 +202,7 @@ def get_regression_scorers() -> Dict:
     scorers = {
         "mae": mae_scorer,
         "mse": mse_scorer,
-        "r2": make_scorer(r2_score, greater_is_better=True, reponse_method='predict'),
+        "r2": make_scorer(r2_score, greater_is_better=True, response_method='predict'),
         "ccc": ccc_scorer,
         "spearman": spearman_scorer,
     }
@@ -623,15 +623,15 @@ def sign_roc_auc_score(y_true, y_pred, **kwargs):
 
 
 sign_mcc_scorer = make_scorer(
-    sign_mcc_score, greater_is_better=True, reponse_method='predict'
+    sign_mcc_score, greater_is_better=True, response_method='predict'
 )
 
 sign_f1_scorer = make_scorer(
-    sign_f1_score, greater_is_better=True, reponse_method='predict'
+    sign_f1_score, greater_is_better=True, response_method='predict'
 )
 
 sign_roc_auc_scorer = make_scorer(
-    sign_roc_auc_score, greater_is_better=True, reponse_method='predict'
+    sign_roc_auc_score, greater_is_better=True, response_method='predict'
 )
 
 
@@ -1212,7 +1212,7 @@ def random_search_train(
     X_test=None,
     y_test=None,
     n_splits=5,
-    scoring={"mae": mae_scorer, "mse": mse_scorer},
+    scoring=None,
     refit="mse",
     n_iter: int = 10,
     **cv_kws,
@@ -1255,6 +1255,8 @@ def random_search_train(
         cv = cv_method(n_splits=n_splits, **cv_kws)
         folds = cv.split(X_train, y_train)
 
+    if scoring is None:
+        scoring = {"mae": mae_scorer, "mse": mse_scorer}
     if isinstance(scoring, dict):
         print(f"Scoring: {scoring.keys()}, refit: {refit}")
     # run random search
@@ -1281,13 +1283,7 @@ def score(
     learner,
     X,
     y,
-    scorer_dict: dict = {
-        "mae": mae_scorer,
-        "mse": mse_scorer,
-        "mcc": sign_mcc_scorer,
-        "f1_score": sign_f1_scorer,
-        "roc_auc": sign_roc_auc_scorer,
-    },
+    scorer_dict: dict = None,
 ) -> pd.Series:
     """Function to generate various scores / metrics.
 
@@ -1296,6 +1292,14 @@ def score(
     pd.Series
         [description]
     """
+    if scorer_dict is None:
+        scorer_dict = {
+            "mae": mae_scorer,
+            "mse": mse_scorer,
+            "mcc": sign_mcc_scorer,
+            "f1_score": sign_f1_scorer,
+            "roc_auc": sign_roc_auc_scorer,
+        }
     # y_pred = learner.predict(X)
     scores = {
         name: scorer(learner, X, y) for name, scorer in scorer_dict.items()
@@ -1418,7 +1422,9 @@ def pipeline_train(
             )
             # join with continuous variables
             data = pd.concat([data[cont_cols + [target_var]], cat_data], axis=1)
-            assert data.shape == (h, w + 1)
+            # ordinal encoding does not change the number of columns, so the
+            # width stays the same as the original input
+            assert data.shape == (h, w)
             if verbose:
                 print("Use Ordinal encoding for categorical variables.")
         if verbose:
@@ -1662,11 +1668,10 @@ def ts_predict(
     plot=True,
 ):
     if test_size is not None and test_size > 0:
-        train_idx, test_idx = train_test_split_ts(
+        # train_test_split_ts returns (train, test) frames, not index arrays
+        train, test = train_test_split_ts(
             data, ban_zone=ban_zone, test_size=test_size
         )
-        train = data.iloc[train_idx]
-        test = data.iloc[test_idx]
     else:
         train = data
         test = None
@@ -1677,7 +1682,7 @@ def ts_predict(
     cv = spliter.split(train)
 
     if model is None:
-        model = make_pipeline([skp.StandardScaler(), Ridge()])
+        model = make_pipeline(skp.StandardScaler(), Ridge())
         params = {"ridge__alpha": [1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0]}
 
     gs = GridSearchCV(
@@ -1699,9 +1704,12 @@ def ts_predict(
         print("Return Test set scores.")
     else:
         y_pred = gs.predict(X_train)
+        # no test set: evaluate against the training targets so score_reg
+        # has a well-defined y_test
+        y_test = y_train
         print("Return Training set scores.")
 
-    scores = score_reg(y_test, y_pred, p=X_train.ndim, plot=plot)
+    scores = score_reg(y_test, y_pred, p=X_train.shape[1], plot=plot)
 
     return gs, scores
 
