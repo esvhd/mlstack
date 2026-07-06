@@ -2,7 +2,6 @@ import time
 import numpy as np
 import pandas as pd
 import joblib
-import warnings
 import tqdm
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -18,7 +17,7 @@ from typing import (
     Tuple,
     Callable,
 )
-from scipy.stats import rv_continuous
+from scipy.stats import loguniform
 from scipy.stats import pearsonr, spearmanr
 import scipy.cluster.hierarchy as H
 import scipy.spatial.distance as D
@@ -49,7 +48,8 @@ from .utils import diag_plot
 from .tscv import TimeSeriesEmbargoSplit
 
 
-mcc_scorer = make_scorer(mcc, greater_is_better=False, response_method='predict')
+# MCC is a greater-is-better metric (perfect prediction = +1)
+mcc_scorer = make_scorer(mcc, greater_is_better=True, response_method='predict')
 
 brier_scorer = make_scorer(
     brier_score_loss, greater_is_better=False, response_method="predict_proba"
@@ -81,6 +81,7 @@ def score_reg(
     nobs: int = None,
     p: int = None,
     verbose: bool = True,
+    rand_seed=None,
 ) -> Dict:
     """Run all commonly used regression metrics. Note that since this uses
     sklearn's r2_score(), R^2 score here always assumes model has an intercept.
@@ -119,13 +120,15 @@ def score_reg(
     # explicitly telling the models not to do so. See SO answer below
     # https://stackoverflow.com/questions/54614157/scikit-learn-statsmodels-which-r-squared-is-correct
     r2 = r2_score(y_truth, y_pred)
+    r2_adj = None
     if nobs is None:
         nobs = len(y_truth)
-    if p is not None and nobs > 0 and p > 1:
+    # p >= 1: adjustment is defined for any model with at least one feature
+    if p is not None and p >= 1 and nobs > p + 1:
         # compute adjusted R-squared
-        r2 = 1 - (1 - r2) * (nobs - 1) / (nobs - p - 1)
+        r2_adj = 1 - (1 - r2) * (nobs - 1) / (nobs - p - 1)
         if verbose:
-            print(f"Adjusted R^2 score: {r2:.3f}")
+            print(f"Adjusted R^2 score: {r2_adj:.3f}")
     elif verbose:
         print(f"R^2 score: {r2:.3f}")
 
@@ -150,6 +153,7 @@ def score_reg(
 
     out = {
         "r2": r2,
+        "r2_adj": r2_adj,
         "pearsonr": corr,
         "pearsonr_pval": pval,
         "ccc": con_corr,
@@ -162,8 +166,8 @@ def score_reg(
     if plot:
         # produce diagnal plot, choose max of N samples
         N = plot_size if len(y_truth) > plot_size else len(y_truth)
-        # N = np.min([500, len(y_truth)])
-        idx = np.random.choice(range(0, len(y_truth)), size=N, replace=False)
+        rng = np.random.default_rng(rand_seed)
+        idx = rng.choice(len(y_truth), size=N, replace=False)
         print(f"Randomly choose {len(idx)} samples to plot...")
 
         if isinstance(y_truth, np.ndarray):
@@ -315,7 +319,8 @@ def reg_baseline_ransac(
     verbose: bool = True,
     **ransac_kws,
 ) -> Tuple:
-    model = RANSACRegressor(base_estimator=base_estimator, **ransac_kws)
+    # sklearn 1.2+ renamed base_estimator= to estimator=
+    model = RANSACRegressor(estimator=base_estimator, **ransac_kws)
     out = reg_baseline(
         model,
         X,
@@ -493,6 +498,8 @@ def transform(
     x2 = col_trans.fit_transform(x)
 
     if keep_orig:
+        # x2 is an ndarray; wrap it so it can be joined on the index
+        x2 = pd.DataFrame(x2, index=x.index).add_prefix("trans_")
         out = x.join(x2, how="left")
     else:
         # out = x2
@@ -511,13 +518,16 @@ def transform(
 def get_onehot_cat_columns(
     ct: ColumnTransformer, enc_name="onehotencoder", drop_first=True
 ) -> List[str]:
-    oh_cols = []
-    if drop_first:
-        offset = 1
+    enc = ct.named_transformers_.get(enc_name)
+    # respect what the encoder actually dropped rather than assuming
+    if getattr(enc, "drop_idx_", None) is not None:
+        oh_cols = [
+            np.delete(c, enc.drop_idx_[i])
+            for i, c in enumerate(enc.categories_)
+        ]
     else:
-        offset = 0
-    for c in ct.named_transformers_.get(enc_name).categories_:
-        oh_cols.append(c[offset:])
+        offset = 1 if drop_first else 0
+        oh_cols = [c[offset:] for c in enc.categories_]
     return np.concatenate(oh_cols).tolist()
 
 
@@ -559,19 +569,25 @@ def quick_transform(
     # columns orders should be std_cols, cat_cols, and any others
     if cat_cols is not None:
         if use_onehot:
-            oh_cols = get_onehot_cat_columns(coder)
+            oh_cols = get_onehot_cat_columns(
+                coder, drop_first=(cat_drop == "first")
+            )
             out_cols += oh_cols
         else:
-            # make sure categorical vars are Int32
-            for x in cat_cols:
-                out[x] = out[x].astype(np.int32)
+            # make sure categorical vars are Int32. Note: at this point
+            # `out` columns are positional (0..n); the cat columns sit right
+            # after the std columns.
+            n_std = len(std_cols) if std_cols is not None else 0
+            for i in range(len(cat_cols)):
+                col = out.columns[n_std + i]
+                out[col] = out[col].astype(np.int32)
 
     # other columns which are not either std_cols or one-hot columns
     # i.e. those passed through
     other_mask = [
-        (x not in std_cols if std_cols is not None else True)
-        and (x not in cat_cols if cat_cols is not None else True)
-        for x in x.columns
+        (c not in std_cols if std_cols is not None else True)
+        and (c not in cat_cols if cat_cols is not None else True)
+        for c in x.columns
     ]
     if np.any(other_mask):
         last_cols = x.columns[other_mask].tolist()
@@ -603,9 +619,11 @@ def sign_binary_class_score(score_func, y_true, y_pred, **kwargs):
     class_truth = prediction_sign(y_true)
     class_pred = prediction_sign(y_pred)
 
-    # clean class labels
-    class_truth[class_truth == 0] = np.random.choice([1, -1])
-    class_pred[class_pred == 0] = np.random.choice([1, -1])
+    # map zeros to the positive class deterministically. Randomising here
+    # makes scores irreproducible across calls (and relabelling the truth
+    # corrupts the ground truth).
+    class_truth[class_truth == 0] = 1
+    class_pred[class_pred == 0] = 1
 
     return score_func(class_truth, class_pred, **kwargs)
 
@@ -731,7 +749,8 @@ def param_search_lgb(
     best_learner:
         fitted best model
     """
-    # some params
+    # copy so the caller's dict is not mutated by the pops below
+    params = dict(params)
     max_depth = params.pop("max_depth")
     num_leaves = params.pop("num_leaves")
     assert max_depth is not None
@@ -772,7 +791,9 @@ def param_search_lgb(
         )
         # model_selection._search.format_results() sometimes has an bug and
         # returns nothing, causing ValueError when unpacking output.
-        rs.fit(X_train, y_train, verbose=-1)
+        # NOTE: lightgbm 4 removed the verbose= fit param; use the
+        # constructor/params to control verbosity instead.
+        rs.fit(X_train, y_train)
 
         if best_score is None:
             best_score = rs.best_score_
@@ -900,21 +921,20 @@ def dendrogram(
     best_link = None
     best_ccc = None
 
-    methods = ["average", "single", "complete", "ward", "centroid", "median"]
+    methods = ["average", "single", "complete"]
+    if metric == "euclidean":
+        # these linkage methods are only valid for euclidean distances
+        methods += ["ward", "centroid", "median"]
     for m in methods:
         link = H.linkage(dist, method=m, metric=metric)
-        dcop = H.cophenet(link)
-        # compute cophenetic correlation coefficient
-        cc = spearmanr(dist, dcop)
-        cache[m] = cc.correlation
+        # cophenetic correlation coefficient: scipy computes the (Pearson)
+        # correlation between the original and cophenetic distances directly
+        cc, _ = H.cophenet(link, dist)
+        cache[m] = cc
 
         # keep the best cophenetic corr method
-        if best_ccc is None:
-            best_ccc = cc.correlation
-            best_link = link
-            best = m
-        elif cc.correlation > best_ccc:
-            best_ccc = cc.correlation
+        if best_ccc is None or cc > best_ccc:
+            best_ccc = cc
             best_link = link
             best = m
 
@@ -923,7 +943,9 @@ def dendrogram(
 
     if plot:
         _, ax = plt.subplots(figsize=figsize)
-        H.dendrogram(best_link, labels=X.columns, orientation="right", ax=ax)
+        # linkage leaves correspond to ROWS of X - label with the index.
+        # (For a correlation matrix, index == columns.)
+        H.dendrogram(best_link, labels=X.index, orientation="right", ax=ax)
         ax.set_title(
             f"Best method = {best}, Cophenetic Corr Coef = {best_ccc:.1%}"
         )
@@ -977,12 +999,13 @@ def parse_linkage(
         next_idx = branch - N
         if verbose:
             print(f"next idx: {next_idx}")
-        for nn in next_idx:
-            subset = Z[nn]
-            sub_leaves = parse_linkage(subset, Z, verbose=verbose)
+        # recurse into EVERY sub-branch and keep all their leaves
+        sub_leaves = [
+            parse_linkage(Z[nn], Z, N, verbose=verbose) for nn in next_idx
+        ]
         if verbose:
             print(f"sub-leaves returned: {sub_leaves}")
-        leaves = np.concatenate([leaves, sub_leaves])
+        leaves = np.concatenate([leaves] + sub_leaves)
     return leaves
 
 
@@ -993,11 +1016,15 @@ def permutation_importances(
     y_train,
     metric=nll_metric,
     verbose: bool = False,
+    rand_seed=None,
 ) -> pd.Series:
     """Permuation importance metrics. Measures the difference of metric
     between baseline and randomly permuted rows for a given feature.
 
     The direction of the metric, improving or declining, shows the importance.
+
+    NOTE: consider permute_imp_sk() which wraps sklearn's parallel,
+    seedable implementation of the same idea.
 
     Parameters
     ----------
@@ -1016,12 +1043,13 @@ def permutation_importances(
     """
     baseline = metric(model, X_train, y_train)
     imp = []
+    rng = np.random.default_rng(rand_seed)
 
     for col in tqdm.tqdm(X_train.columns):
         if verbose:
             print(f"Computing metrics for {col}...")
         save = X_train[col].copy()
-        X_train[col] = np.random.permutation(X_train[col])
+        X_train[col] = rng.permutation(X_train[col].values)
         score = metric(model, X_train, y_train)
         X_train[col] = save
         imp.append(baseline - score)
@@ -1032,7 +1060,7 @@ def permutation_importances(
     return imp
 
 
-def _permute_columns_eval(model, X, y, cols, metric):
+def _permute_columns_eval(model, X, y, cols, metric, rand_seed=None):
     """Helper function for parallel processing permute / eval.
 
     Parameters
@@ -1054,9 +1082,10 @@ def _permute_columns_eval(model, X, y, cols, metric):
         [description]
     """
     X_copy = X.copy()
+    rng = np.random.default_rng(rand_seed)
     # cols are column names in this cluster. Permute all columns
     for c in cols:
-        X_copy[c] = np.random.permutation(X_copy[c])
+        X_copy[c] = rng.permutation(X_copy[c].values)
 
     score = metric(model, X_copy, y)
 
@@ -1075,12 +1104,7 @@ def clustered_permututation_importance(
         for key, cols in cluster_dict.items():
             # key is cluster label
             print(f"Compute importance for cluster: {key}...")
-            X_copy = X.copy()
-            # cols are column names in this cluster. Permute all columns
-            for c in cols:
-                X_copy[c] = np.random.permutation(X_copy[c])
-
-            m = metric(model, X_copy, y)
+            m = _permute_columns_eval(model, X, y, cols, metric)
             imp[key] = baseline - m
 
         imp = pd.Series(imp)
@@ -1247,7 +1271,10 @@ def random_search_train(
     [type]
         [description]
     """
-    if isinstance(cv_method, int):
+    if cv_method is None:
+        # fall back to plain k-fold with n_splits folds
+        folds = n_splits
+    elif isinstance(cv_method, int):
         # otherwise, cv is no. of folds
         folds = cv_method
     else:
@@ -1478,8 +1505,16 @@ def pipeline_train(
     if normalize:
         # somehow this step sees a sparse matrix and cannot standardise
         # with mean...
+        if impute_strategy is not None:
+            # the impute ColumnTransformer reorders its output: transformed
+            # (continuous) columns come first, passthrough columns after.
+            # So downstream steps must address the continuous columns by
+            # their NEW positions 0..n_cont-1, not the original locations.
+            norm_cols_loc = list(range(len(cont_cols_loc)))
+        else:
+            norm_cols_loc = cont_cols_loc
         cont_encoder = ColumnTransformer(
-            [("normalise", skp.StandardScaler(), cont_cols_loc)],
+            [("normalise", skp.StandardScaler(), norm_cols_loc)],
             remainder="passthrough",
         )
         model_steps.append(("normalise", cont_encoder))
@@ -1536,14 +1571,6 @@ def pipeline_train(
     return rs
 
 
-class LogUniformDist(rv_continuous):
-    def __init___(self, **kwargs):
-        super().__init__(self, **kwargs)
-
-    def _cdf(self, x):
-        return np.log(x / self.a) / np.log(self.b / self.a)
-
-
 def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
     """Draw from log uniform distrubtion. This is useful for hyperparameter
     searches where sampling uniformly between a and b isn't efficient.
@@ -1565,9 +1592,10 @@ def log_uniform_draw(n: int, a: float = 1e-3, b: float = 1e3):
     ndarray
         draws
     """
-    dist = LogUniformDist(a=a, b=b, name="log_uniform")
-    draws = dist.rvs(size=n)
-    return draws
+    # scipy's built-in loguniform samples analytically (no numeric CDF
+    # inversion), which is both correct and much faster than a custom
+    # rv_continuous subclass
+    return loguniform(a, b).rvs(size=n)
 
 
 def train_test_split_ts(
@@ -1648,9 +1676,11 @@ def permute_imp_sk(
     std = imp_dict.get("importances_std")
 
     df = pd.DataFrame.from_dict({"score_mean": mean, "score_std": std})
-    df.sort_values("score_mean", inplace=True)
+    # attach feature labels BEFORE sorting, otherwise the sorted scores get
+    # relabelled with the wrong features
     if isinstance(X, pd.DataFrame):
         df.index = X.columns
+    df.sort_values("score_mean", inplace=True)
     return df, imp_dict
 
 
@@ -1664,7 +1694,7 @@ def ts_predict(
     ban_zone: int = 0,
     n_splits: int = 5,
     train_embargo_size=0,
-    scoring="mse",
+    scoring="neg_mean_squared_error",
     plot=True,
 ):
     if test_size is not None and test_size > 0:
@@ -1714,76 +1744,17 @@ def ts_predict(
     return gs, scores
 
 
-def get_feature_names(column_transformer):
+def get_feature_names(column_transformer) -> List[str]:
     """Get feature names from all transformers.
 
-    Credit: https://johaupt.github.io/scikit-learn/tutorial/python/data%20processing/ml%20pipeline/model%20interpretation/columnTransformer_feature_names.html
+    Thin wrapper around sklearn's native get_feature_names_out(), which
+    handles ColumnTransformers, Pipelines, and passthrough columns. The
+    old hand-rolled implementation relied on private sklearn internals
+    (_iter signatures, get_feature_names) that no longer exist.
 
     Returns
     -------
     feature_names : list of strings
         Names of the features produced by transform.
     """
-    # Remove the internal helper function
-    # check_is_fitted(column_transformer)
-
-    # Turn loopkup into function for better handling with pipeline later
-    def get_names(trans):
-        # >> Original get_feature_names() method
-        if trans == "drop" or (hasattr(column, "__len__") and not len(column)):
-            return []
-        if trans == "passthrough":
-            if hasattr(column_transformer, "_df_columns"):
-                if (not isinstance(column, slice)) and all(
-                    isinstance(col, str) for col in column
-                ):
-                    return column
-                else:
-                    return column_transformer._df_columns[column]
-            else:
-                indices = np.arange(column_transformer._n_features)
-                return ["x%d" % i for i in indices[column]]
-        if not hasattr(trans, "get_feature_names"):
-            # >>> Change: Return input column names if no method avaiable
-            # Turn error into a warning
-            warnings.warn(
-                "Transformer %s (type %s) does not "
-                "provide get_feature_names. "
-                "Will return input column names if available"
-                % (str(name), type(trans).__name__)
-            )
-            # For transformers without a get_features_names method, use the
-            # input names to the column transformer
-            if column is None:
-                return []
-            else:
-                return [name + "__" + f for f in column]
-
-        return [name + "__" + f for f in trans.get_feature_names()]
-
-    # Start of processing
-    feature_names = []
-
-    # Allow transformers to be pipelines. Pipeline steps are named differently,
-    # so preprocessing is needed
-    if isinstance(column_transformer, sklearn.pipeline.Pipeline):
-        l_transformers = [
-            (name, trans, None, None)
-            for step, name, trans in column_transformer._iter()
-        ]
-    else:
-        # For column transformers, follow the original method
-        l_transformers = list(column_transformer._iter(fitted=True))
-
-    for name, trans, column, _ in l_transformers:
-        if isinstance(trans, sklearn.pipeline.Pipeline):
-            # Recursive call on pipeline
-            _names = get_feature_names(trans)
-            # if pipeline has no transformer that returns names
-            if len(_names) == 0:
-                _names = [name + "__" + f for f in column]
-            feature_names.extend(_names)
-        else:
-            feature_names.extend(get_names(trans))
-
-    return feature_names
+    return list(column_transformer.get_feature_names_out())

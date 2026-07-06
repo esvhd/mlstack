@@ -80,8 +80,12 @@ def rmspe(y_true, y_pred) -> float:
     float
         [description]
     """
-    # add a small epsilon to the divisor to avoid division by zero when
-    # y_true contains exact zeros (e.g. flat return days). Note this can
-    # still produce very large values for near-zero truths, but avoids
-    # inf/nan propagation.
-    return np.sqrt(np.mean(np.square((y_true - y_pred) / (y_true + 1e-10))))
+    # replace exact zeros in the divisor with a small epsilon to avoid
+    # division by zero (e.g. flat return days). Substituting (rather than
+    # adding) the epsilon keeps negative truths intact - adding it would
+    # shift negative denominators toward zero. Note this can still produce
+    # very large values for zero truths, but avoids inf/nan propagation.
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    denom = np.where(y_true == 0, 1e-10, y_true)
+    return np.sqrt(np.mean(np.square((y_true - y_pred) / denom)))

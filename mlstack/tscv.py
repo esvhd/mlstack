@@ -1,6 +1,7 @@
 """
 Time series CV tools
 """
+import numpy as np
 import pandas as pd
 import warnings
 from sklearn.model_selection import TimeSeriesSplit
@@ -32,19 +33,19 @@ def wide_to_long(
     pd.DataFrame
         long format data frame with NaNs dropped.
     """
+    # reset index so date becomes a column. a named index (e.g. a
+    # DatetimeIndex named "date") becomes a column under its own name,
+    # not "index" - resolve the id column accordingly.
+    df = df.reset_index()
+    if id_var not in df.columns:
+        id_var = df.columns[0]
     df = (
-        df
-        # reset index so date becomes a column
-        .reset_index().melt(
-            id_vars=id_var, var_name=var_name, value_name="value"
-        )
+        df.melt(id_vars=id_var, var_name=var_name, value_name=value_name)
         # remove NaN not aligned in wide format, e.g. due to holidays
         .dropna(axis=0)
     )
     df.sort_values([var_name, id_var], inplace=True)
-    # reindex
-    df.index = [x for x in range(len(df))]
-    return df
+    return df.reset_index(drop=True)
 
 
 def time_series_embargo_split(
@@ -68,24 +69,23 @@ def time_series_embargo_split(
     ------
     tuple of indices of train and test data
     """
-    assert embargo_size >= 0, "embargo_size must be non negetive."
+    assert embargo_size >= 0, "embargo_size must be non negative."
 
     # split with time series split
-    tscv = TimeSeriesSplit(n_splits, max_train_size=max_train_size)
+    tscv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
     base_cv = tscv.split(X_wide)
 
-    if embargo_size < 1:
-        return base_cv
-
-    # for each pair, chop off the last few samples in training
+    # NOTE: this function is a generator (it contains yield), so an early
+    # `return base_cv` would silently yield nothing. Always iterate.
     for train_idx, test_idx in base_cv:
-        assert len(train_idx) > embargo_size
-        if len(train_idx) < 2 * embargo_size:
-            warnings.warn(
-                f"Training size {len(train_idx)} < 2x "
-                + f"Embargo size {embargo_size}"
-            )
         if embargo_size > 0:
+            assert len(train_idx) > embargo_size
+            if len(train_idx) < 2 * embargo_size:
+                warnings.warn(
+                    f"Training size {len(train_idx)} < 2x "
+                    + f"Embargo size {embargo_size}"
+                )
+            # chop off the last few samples in training
             train_idx = train_idx[:-embargo_size]
         yield train_idx, test_idx
 
@@ -119,7 +119,9 @@ def long_format_ts_embargo_split(
 
     Yields
     ------
-    tuple of train and test indices
+    tuple of positional train and test indices into long_df (row numbers
+    after sorting when sort_time_col=True, otherwise row numbers of the
+    input frame).
     """
     # convert from long to wide format, use X to hold dates
     assert time_col in long_df.columns, f"{time_col} does NOT exist in frame."
@@ -130,23 +132,16 @@ def long_format_ts_embargo_split(
     # make sure data is sorted in time order
     if sort_time_col:
         long_df.sort_values(time_col, ascending=True, inplace=True)
-        long_df.index = [x for x in range(len(long_df))]
+        long_df.reset_index(drop=True, inplace=True)
 
-    # X is np.ndarray
-    X = long_df[time_col].unique().reshape((-1, 1))
+    # np.asarray: pandas .unique() may return a DatetimeArray, which has
+    # no .squeeze() and does not index like an ndarray
+    X = np.asarray(long_df[time_col].unique()).reshape((-1, 1))
 
-    # pdb.set_trace()
-
-    # 1st way
-    # tscv = TimeSeriesEmbargoSplit(embargo_size=10, n_splits=n_splits)
-    # cv = tscv.split(X)
-
-    # 2nd way, one more iter loop so may be a bit slower.
     cv = time_series_embargo_split(X, embargo_size, n_splits=n_splits)
 
     # map dates onto original frame
-    for idx in cv:
-        train, test = idx
+    for train, test in cv:
         train_time, test_time = X[train].squeeze(), X[test].squeeze()
 
         if debug:
@@ -154,18 +149,14 @@ def long_format_ts_embargo_split(
             print(f"train time tail = {train_time[-5:]}")
             print(f"test time head = {test_time[:5]}")
 
-        # if i don't do .values below, the reuslts are all False.
-        # this is because numpy and pandas use different datetime types...
-        # train_mask = (x in train_time for x in long_df[time_col].values)
-        # test_mask = (x in test_time for x in long_df[time_col].values)
         train_mask = long_df[time_col].isin(train_time)
         test_mask = long_df[time_col].isin(test_time)
 
-        # identify train / test blocks with date masks, return their indices
-        train_idx = long_df.loc[train_mask].index
-        test_idx = long_df.loc[test_mask].index
-
-        # pdb.set_trace()
+        # identify train / test blocks with date masks. Return POSITIONS
+        # (not index labels) so downstream iloc-style CV consumers work
+        # with any input index.
+        train_idx = np.flatnonzero(train_mask)
+        test_idx = np.flatnonzero(test_mask)
 
         yield (train_idx, test_idx)
 
@@ -192,16 +183,19 @@ class TimeSeriesEmbargoSplit:
         tscv = TimeSeriesSplit(n_splits=self.n_splits)
         base_cv = tscv.split(X, y, groups=groups)
 
-        if self.embargo_size < 1:
-            return base_cv
-
+        # NOTE: generator function - an early `return base_cv` would
+        # silently yield nothing. Always iterate.
         for train_idx, test_idx in base_cv:
-            assert len(train_idx) > self.embargo_size
-            if len(train_idx) < 2 * self.embargo_size:
-                warnings.warn(
-                    f"Training size {len(train_idx)} < 2x "
-                    + f"Embargo size {self.embargo_size}"
-                )
             if self.embargo_size > 0:
+                assert len(train_idx) > self.embargo_size
+                if len(train_idx) < 2 * self.embargo_size:
+                    warnings.warn(
+                        f"Training size {len(train_idx)} < 2x "
+                        + f"Embargo size {self.embargo_size}"
+                    )
                 train_idx = train_idx[: -self.embargo_size]
             yield train_idx, test_idx
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        # required by sklearn's CV interface
+        return self.n_splits
